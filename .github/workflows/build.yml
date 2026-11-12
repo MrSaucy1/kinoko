@@ -34,9 +34,12 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      # Pinned to the version the app is analysed and tested against; newer
+      # stable releases deprecate APIs and would fail `flutter analyze`.
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: 3.44.4
 
       # Sign with the repo's own keystore when the secrets are set, so new
       # APKs install as an update. Without them the build uses the debug key.
