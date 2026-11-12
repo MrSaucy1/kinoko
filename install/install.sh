@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 # Installs Kinoko on Debian 12/13 or Ubuntu 22.04+ (container, VM or bare metal).
 #
-# The repository is private, so run this from a clone:
+#   bash -c "$(curl -fsSL https://raw.githubusercontent.com/MrSaucy1/kinoko/main/install/install.sh)"
 #
-#   git clone https://github.com/MrSaucy1/kinoko.git && sudo bash kinoko/install/install.sh
+# or from a clone: sudo bash kinoko/install/install.sh (installs that checkout).
 #
 # Environment:
-#   KINOKO_REPO    git URL, only used when not run from a clone
-#   KINOKO_TOKEN   optional GitHub token (read access) so "Kinoko bijwerken" in
-#                  the admin GUI can pull updates from the private repository
+#   KINOKO_REPO    git URL to install from (default: https://github.com/MrSaucy1/kinoko.git)
+#   KINOKO_TOKEN   only for a private fork: GitHub token with read access
 #   KINOKO_PORT    port to listen on (default: 8096)
 set -euo pipefail
 
@@ -18,7 +17,7 @@ TOKEN="${KINOKO_TOKEN:-}"
 DIR=/opt/kinoko
 DATA=/var/lib/kinoko
 # The checkout this script lives in, if any.
-SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd || true)"
+SRC="$(cd "$(dirname "${BASH_SOURCE[0]:-.}")/.." 2>/dev/null && pwd || true)"
 [ -f "$SRC/server/package.json" ] || SRC=""
 
 say() { printf '\033[1;35m▸\033[0m %s\n' "$*"; }
@@ -53,6 +52,7 @@ if [ -n "$SRC" ] && [ "$SRC" != "$DIR" ]; then
   find "$DIR" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
   cp -a "$SRC/." "$DIR/"
   rm -rf "$DIR/server/node_modules" "$DIR/data"
+  [ -d "$DIR/.git" ] && git -C "$DIR" -c safe.directory="$DIR" remote set-url origin "$REPO" || true
 elif [ -d "$DIR/.git" ]; then
   say "Bestaande installatie bijwerken…"
   chown -R kinoko:kinoko "$DIR"
@@ -112,5 +112,4 @@ echo "    http://${ip:-<ip-adres>}:$PORT"
 echo
 echo "    Status:    systemctl status kinoko"
 echo "    Logboek:   journalctl -u kinoko -f"
-if [ -n "$TOKEN" ]; then echo "    Bijwerken: via Beheer → Overzicht → Kinoko bijwerken"
-else echo "    Bijwerken: git pull in je clone en dit script opnieuw uitvoeren (of installeer met KINOKO_TOKEN voor de knop in Beheer)"; fi
+echo "    Bijwerken: via Beheer → Overzicht → Kinoko bijwerken"

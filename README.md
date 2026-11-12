@@ -32,41 +32,34 @@ install/  Proxmox-helperscript, installer en de root-beheerhulp
 
 ## Installeren op Proxmox
 
-De repository is privé: je hebt toegang nodig (uitnodiging als collaborator)
-en logt bij het clonen in met je GitHub-account of een token.
-
 Op de Proxmox-host, als root:
 
 ```bash
-apt-get install -y git
-git clone https://github.com/MrSaucy1/kinoko.git
-bash kinoko/install/kinoko-lxc.sh
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/MrSaucy1/kinoko/main/install/kinoko-lxc.sh)"
 ```
 
 Het script vraagt om container-ID, opslag, de map met je media en of de
 videokaart doorgegeven moet worden, maakt een Debian-container en installeert
-Kinoko daarin vanuit je clone. Open daarna `http://<ip>:8096` en doorloop de
-onboarding.
+Kinoko. Open daarna `http://<ip>:8096` en doorloop de onboarding.
 
-Al een Debian/Ubuntu-machine of -container? Clone daar en voer uit:
+Al een Debian/Ubuntu-machine of -container? Dan alleen:
 
 ```bash
-sudo bash kinoko/install/install.sh
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/MrSaucy1/kinoko/main/install/install.sh)"
 ```
 
-**Bijwerken.** Zonder meer: `git pull` in je clone en het script opnieuw
-uitvoeren (bij een LXC: `install.sh` in de container; je instellingen en
-bibliotheek blijven staan in `/var/lib/kinoko`). Wil je de knop *Kinoko
-bijwerken* in het beheer gebruiken, geef dan bij het installeren een
-GitHub-token met alleen leesrechten op deze repository mee:
-`KINOKO_TOKEN=github_pat_… bash kinoko/install/kinoko-lxc.sh`.
+Beide scripts werken ook vanuit een `git clone`; dan wordt die checkout
+geïnstalleerd. Een fork gebruiken: zet `KINOKO_REPO=https://github.com/<jij>/kinoko.git`
+voor het commando.
 
 **Let op bij een unprivileged container:** de mediamap wordt alleen-lezen
 gekoppeld op `/mnt/media`; de bestanden moeten voor "anderen" leesbaar zijn.
 
+Bijwerken kan via *Beheer → Overzicht → Kinoko bijwerken*.
+
 ## Apps
 
-De APK's staan bij de [release `latest`](../../releases/tag/latest) (zichtbaar voor wie toegang heeft tot de repository):
+De APK's staan bij de [release `latest`](../../releases/tag/latest):
 `kinoko-vX.Y.Z.apk` (telefoon/tablet) en `kinoko-tv-vX.Y.Z.apk` (Android TV).
 Bij de eerste start vul je het adres van je server in.
 
