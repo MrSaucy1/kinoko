@@ -292,7 +292,7 @@ export function setupView() {
         h('form.stack', { onsubmit: (e) => { e.preventDefault(); act(e.submitter, async () => {
           const r = await api('/api/setup', { method: 'POST', body: { name: name.value, password: pass.value, serverName: server.value } });
           setToken(r.token); state.user = r.user; state.info.needsSetup = false; state.info.name = server.value || 'Kinoko'; show(2);
-        }); } }, h('label.field', h('span', 'Naam van je server'), server, h('small', 'Zien anderen als je bibliotheken deelt, bijv. "Flex\' Kinoko".')),
+        }); } }, h('label.field', h('span', 'Naam van je server'), server, h('small', 'Zien anderen als je bibliotheken deelt, bijv. "Kinoko van Sam".')),
           h('label.field', h('span', 'Jouw naam'), name), h('label.field', h('span', 'Wachtwoord'), pass, h('small', 'Minstens 6 tekens.')),
           h('div.wizard-foot', h('span.spacer'), h('button.btn.primary', 'Account aanmaken'))));
     } else if (n === 2) {
