@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Root helper for the Kinoko admin GUI. The server runs as the unprivileged
+# "kinoko" user and may run ONLY this script through sudo (see
+# /etc/sudoers.d/kinoko). Every argument is validated here.
+set -euo pipefail
+
+INSTALL_DIR="${KINOKO_DIR:-/opt/kinoko}"
+cmd="${1:-}"
+
+need_port() { [[ "${1:-}" =~ ^[0-9]{2,5}$ ]] || { echo "Ongeldige poort." >&2; exit 2; }; }
+
+case "$cmd" in
+  tailscale-install)
+    command -v tailscale >/dev/null || curl -fsSL https://tailscale.com/install.sh | sh
+    systemctl enable --now tailscaled
+    ;;
+  tailscale-up)
+    # Prints the login URL and returns; the admin finishes sign-in in a browser.
+    timeout 20 tailscale up 2>&1 | grep -m1 -Eo 'https://login\.tailscale\.com/[A-Za-z0-9/_-]+' || tailscale status | head -1
+    ;;
+  tailscale-serve)
+    need_port "${2:-}"; tailscale serve --bg "$2"
+    ;;
+  tailscale-funnel)
+    need_port "${2:-}"; tailscale funnel --bg "$2"
+    ;;
+  tailscale-serve-off)
+    tailscale funnel reset || true; tailscale serve reset
+    ;;
+  cloudflared-install)
+    if ! command -v cloudflared >/dev/null; then
+      arch="$(dpkg --print-architecture)"
+      tmp="$(mktemp --suffix=.deb)"
+      curl -fsSL -o "$tmp" "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${arch}.deb"
+      dpkg -i "$tmp"; rm -f "$tmp"
+    fi
+    ;;
+  cloudflared-connect)
+    [[ "${2:-}" =~ ^[A-Za-z0-9_=-]{40,}$ ]] || { echo "Ongeldig tunnel-token." >&2; exit 2; }
+    cloudflared service uninstall >/dev/null 2>&1 || true
+    cloudflared service install "$2"
+    ;;
+  cloudflared-disconnect)
+    cloudflared service uninstall
+    ;;
+  update)
+    cd "$INSTALL_DIR"
+    sudo -u kinoko git pull --ff-only
+    (cd server && sudo -u kinoko npm ci --omit=dev --no-audit --no-fund)
+    install -m 755 install/kinoko-helper /usr/local/bin/kinoko-helper
+    # Restart a moment later so the admin GUI still receives this output.
+    systemd-run --on-active=2 systemctl restart kinoko >/dev/null 2>&1
+    git -C "$INSTALL_DIR" log -1 --format='Bijgewerkt naar %h (%s)'
+    ;;
+  *)
+    echo "Onbekende opdracht." >&2; exit 2
+    ;;
+esac

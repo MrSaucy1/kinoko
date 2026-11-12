@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Kinoko mushroom, scaled into the adaptive-icon safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <group android:scaleX="1.05" android:scaleY="1.05" android:translateX="20.4" android:translateY="19.5">
+        <path android:fillColor="#A855F7" android:pathData="M32,11c-13,0 -22,8.5 -22,18c0,3.2 2.2,5 5.5,5h33c3.3,0 5.5,-1.8 5.5,-5C54,19.5 45,11 32,11z"/>
+        <path android:fillColor="#EFE6FF" android:pathData="M26,34h12l2.2,14.5c0.5,3 -1.7,5.5 -4.7,5.5h-7c-3,0 -5.2,-2.5 -4.7,-5.5z"/>
+        <path android:fillColor="#F5EDFF" android:pathData="M23,23m-3.2,0a3.2,3.2 0,1 1,6.4 0a3.2,3.2 0,1 1,-6.4 0"/>
+        <path android:fillColor="#F5EDFF" android:pathData="M35,18.5m-2.3,0a2.3,2.3 0,1 1,4.6 0a2.3,2.3 0,1 1,-4.6 0"/>
+        <path android:fillColor="#F5EDFF" android:pathData="M43,26m-2.7,0a2.7,2.7 0,1 1,5.4 0a2.7,2.7 0,1 1,-5.4 0"/>
+    </group>
+</vector>

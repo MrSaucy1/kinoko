@@ -375,7 +375,8 @@ export async function joinRoomView({ code }) {
     h('p', `Kijk samen naar ${info.title ? info.title.title : 'een film'}${info.episode ? ` — S${info.episode.season} A${info.episode.episode}` : ''}. Pauzeren en spoelen gaat voor iedereen tegelijk.`),
     h('label.field', h('span', 'Hoe heet je?'), name),
     h('button.btn.primary.lg', { style: { width: '100%', marginTop: '18px' } }, icon('play'), 'Meekijken'),
-    h('p.faint', { style: { marginTop: '14px', fontSize: '13px', textAlign: 'center' } }, 'Heb je een account op deze server? ', h('a', { href: `/login?next=/w/${code}` }, 'Log in')))));
+    h('p.faint', { style: { marginTop: '14px', fontSize: '13px', textAlign: 'center' } }, 'Heb je een account op deze server? ', h('a', { href: `/login?next=/w/${code}` }, 'Log in'),
+      ' · ', h('a', { href: `kinoko://w/${code}`, target: '_self' }, 'Open in de Kinoko-app')))));
 }
 
 // ---------------------------------------------------------------------------

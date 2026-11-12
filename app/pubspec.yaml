@@ -1,0 +1,37 @@
+name: kinoko
+description: "Kinoko — je eigen streamingdienst (mobiel & tv)"
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Netwerk & opslag
+  http: ^1.2.2
+  shared_preferences: ^2.3.2
+  path_provider: ^2.1.4
+  web_socket_channel: ^3.0.1   # Samen kijken
+
+  # Speler: libmpv speelt vrijwel elk formaat direct af (mkv, HEVC, DTS,
+  # ingebedde ondertitels), zodat de server alleen hoeft om te zetten als de
+  # kijker zelf een lagere kwaliteit kiest.
+  media_kit: ^1.1.11
+  media_kit_video: ^1.2.5
+  media_kit_libs_android_video: ^1.3.6
+
+  # Uitnodigingslinks (kinoko://…) openen de app
+  app_links: ^6.3.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/
