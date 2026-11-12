@@ -42,12 +42,12 @@ android {
     productFlavors {
         create("mobile") {
             dimension = "device"
-            resValue("string", "app_name", "Kinoko")
+            manifestPlaceholders["appName"] = "Kinoko"
         }
         create("tv") {
             dimension = "device"
             applicationIdSuffix = ".tv"
-            resValue("string", "app_name", "Kinoko TV")
+            manifestPlaceholders["appName"] = "Kinoko TV"
         }
     }
 
