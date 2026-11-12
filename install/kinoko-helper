@@ -45,7 +45,10 @@ case "$cmd" in
     ;;
   update)
     cd "$INSTALL_DIR"
-    sudo -u kinoko git pull --ff-only
+    if ! sudo -u kinoko env GIT_TERMINAL_PROMPT=0 git pull --ff-only 2>/tmp/kinoko-update.err; then
+      echo "Bijwerken lukt niet: deze server heeft geen leestoegang tot de (privé) repository. Installeer opnieuw met KINOKO_TOKEN, of werk bij met git pull + install.sh." >&2
+      exit 1
+    fi
     (cd server && sudo -u kinoko npm ci --omit=dev --no-audit --no-fund)
     install -m 755 install/kinoko-helper /usr/local/bin/kinoko-helper
     # Restart a moment later so the admin GUI still receives this output.

@@ -1,16 +1,21 @@
 #!/usr/bin/env bash
 # Proxmox VE helper: creates a Debian LXC and installs Kinoko in it.
-# Run on the Proxmox host (as root):
+# The repository is private, so run this from a clone on the Proxmox host (as root):
 #
-#   bash -c "$(curl -fsSL https://raw.githubusercontent.com/OWNER/kinoko/main/install/kinoko-lxc.sh)"
+#   git clone https://github.com/MrSaucy1/kinoko.git && bash kinoko/install/kinoko-lxc.sh
 #
 # Everything is asked interactively; any answer can be preset through the
 # environment (CTID, CT_HOSTNAME, STORAGE, DISK_GB, CORES, RAM_MB, BRIDGE,
-# MEDIA_PATH, GPU=yes|no, KINOKO_REPO, KINOKO_PORT).
+# MEDIA_PATH, GPU=yes|no, KINOKO_PORT, KINOKO_TOKEN).
+#
+# KINOKO_TOKEN is optional: a GitHub token with read access to the repository,
+# so the container can update itself from the admin GUI later.
 set -euo pipefail
 
 REPO="${KINOKO_REPO:-https://github.com/MrSaucy1/kinoko.git}"
 PORT="${KINOKO_PORT:-8096}"
+TOKEN="${KINOKO_TOKEN:-}"
+SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 say()  { printf '\033[1;35m▸\033[0m %s\n' "$*"; }
 fail() { printf '\033[1;31m✗\033[0m %s\n' "$*" >&2; exit 1; }
@@ -22,6 +27,7 @@ ask()  { # ask VAR "question" default
 }
 
 command -v pct >/dev/null || fail "Dit script draait op de Proxmox-host (pct niet gevonden)."
+[ -f "$SRC/server/package.json" ] || fail "Voer dit script uit vanuit een clone van de Kinoko-repository (zie de README)."
 [ "$(id -u)" -eq 0 ] || fail "Voer dit script uit als root."
 
 echo
@@ -83,8 +89,14 @@ if [ "$GPU" = "yes" ]; then
 fi
 
 say "Kinoko installeren in de container (dit duurt een paar minuten)…"
-pct exec "$CTID" -- bash -c "apt-get update -qq && apt-get install -y -qq curl ca-certificates git >/dev/null"
-pct exec "$CTID" -- bash -c "git clone --depth 1 '$REPO' /opt/kinoko && KINOKO_REPO='$REPO' KINOKO_PORT='$PORT' bash /opt/kinoko/install/install.sh"
+# Hand the container this checkout (the repo is private, so it cannot simply clone it).
+TARBALL="$(mktemp --suffix=.tar.gz)"
+tar -czf "$TARBALL" -C "$SRC" --exclude=node_modules --exclude=./data --exclude=./app/build --exclude=./app/.dart_tool .
+pct push "$CTID" "$TARBALL" /root/kinoko-src.tar.gz
+rm -f "$TARBALL"
+pct exec "$CTID" -- bash -c "mkdir -p /root/kinoko-src && tar -xzf /root/kinoko-src.tar.gz -C /root/kinoko-src --no-same-owner && rm /root/kinoko-src.tar.gz"
+pct exec "$CTID" -- env KINOKO_REPO="$REPO" KINOKO_PORT="$PORT" KINOKO_TOKEN="$TOKEN" bash /root/kinoko-src/install/install.sh
+pct exec "$CTID" -- rm -rf /root/kinoko-src
 
 IP="$(pct exec "$CTID" -- hostname -I | awk '{print $1}')"
 echo
