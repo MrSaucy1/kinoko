@@ -48,8 +48,10 @@ pct status "$CTID" >/dev/null 2>&1 && fail "Container $CTID bestaat al."
 
 say "Debian-template zoeken…"
 pveam update >/dev/null
-TEMPLATE="$(pveam available -section system | awk '/debian-1[23]-standard/{print $2}' | sort -V | tail -1)"
-[ -n "$TEMPLATE" ] || fail "Geen Debian-template gevonden."
+# pveam lists templates for every architecture; take the host's own.
+ARCH="$(dpkg --print-architecture)"
+TEMPLATE="$(pveam available -section system | awk -v a="_${ARCH}." '/debian-1[23]-standard/ && index($2, a){print $2}' | sort -V | tail -1)"
+[ -n "$TEMPLATE" ] || fail "Geen Debian-template gevonden voor $ARCH."
 TPL_STORAGE="$(pvesm status -content vztmpl | awk 'NR==2{print $1}')"
 [ -n "$TPL_STORAGE" ] || fail "Geen opslag gevonden die templates kan bewaren."
 pveam list "$TPL_STORAGE" | grep -q "$TEMPLATE" || pveam download "$TPL_STORAGE" "$TEMPLATE" >/dev/null
