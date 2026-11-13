@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../core/api.dart';
 import '../core/theme.dart';
 import '../widgets/common.dart';
+import 'admin.dart';
 import 'browse.dart';
 import 'player.dart';
 import 'watch_night.dart';
@@ -84,7 +85,7 @@ class ProfileScreen extends StatelessWidget {
             item(Icons.groups_rounded, 'Samen kijken', 'Doe mee met een code van iemand anders', () => joinRoomDialog(context), autofocus: Device.isTv),
             item(Icons.favorite_rounded, 'Mijn lijst', 'Alles wat je hebt bewaard', () => Navigator.push(context, MaterialPageRoute(builder: (_) => const _MyList()))),
             item(Icons.casino_rounded, 'Watch Night', 'Dobbel voor drie films die bij het seizoen passen', () => openWatchNight(context)),
-            if (u['role'] == 'admin') item(Icons.admin_panel_settings_rounded, 'Beheer', 'Open ${api.serverUrl} in een browser om de server te beheren', () => showMessage(context, 'Beheer open je in een browser: ${api.serverUrl}/beheer')),
+            if (u['role'] == 'admin') item(Icons.admin_panel_settings_rounded, 'Beheer', 'Bibliotheken, gebruikers, live tv en instellingen van de server', () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminScreen()))),
             item(Icons.logout_rounded, 'Uitloggen', 'Je blijft verbonden met deze server', () => api.logout()),
             item(Icons.dns_rounded, 'Andere server', 'Uitloggen en een ander serveradres invullen', () => api.logout(forgetServer: true)),
             const SizedBox(height: 18),
