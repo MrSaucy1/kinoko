@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Trailer</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  /* Fill the frame like object-fit: cover, whatever its shape. */
+  iframe { position: absolute; left: 50%; top: 50%; width: 100vw; height: 56.25vw; min-height: 100vh; min-width: 177.78vh; transform: translate(-50%, -50%) scale(1.04); border: 0; pointer-events: none; }
+</style>
+</head>
+<body>
+<script>
+// Muted, chrome-less YouTube trailer used as moving artwork by the web GUI
+// (in an <iframe>) and the apps (in a WebView). Reports "playing", "ended"
+// and "error" to whoever embeds it; accepts "mute" / "unmute" / "stop".
+(() => {
+  const id = new URLSearchParams(location.search).get('v') || '';
+  if (!/^[\w-]{6,20}$/.test(id)) return report('error');
+  let state = '', shown = 0;
+  function report(what) {
+    if (what === state) return;
+    state = what;
+    try { if (window.parent !== window) window.parent.postMessage({ kinokoTrailer: what, id }, '*'); } catch { /* no parent */ }
+    try { if (window.Kinoko) window.Kinoko.postMessage(what); } catch { /* no app */ }
+  }
+  const frame = document.createElement('iframe');
+  frame.allow = 'autoplay; encrypted-media';
+  frame.referrerPolicy = 'strict-origin-when-cross-origin';
+  frame.src = `https://www.youtube-nocookie.com/embed/${id}?${new URLSearchParams({ autoplay: 1, mute: 1, controls: 0, playsinline: 1, rel: 0, modestbranding: 1, iv_load_policy: 3, disablekb: 1, fs: 0, cc_load_policy: 0, enablejsapi: 1, origin: location.origin })}`;
+  const send = (func, args = []) => frame.contentWindow && frame.contentWindow.postMessage(JSON.stringify({ event: 'command', func, args }), '*');
+  frame.addEventListener('load', () => {
+    // Ask the player to report its state changes.
+    const hello = () => frame.contentWindow && frame.contentWindow.postMessage(JSON.stringify({ event: 'listening', id: 1, channel: 'kinoko' }), '*');
+    hello(); setTimeout(hello, 600); setTimeout(hello, 2000);
+  });
+  window.addEventListener('message', (e) => {
+    if (e.source === frame.contentWindow) {
+      let d; try { d = typeof e.data === 'string' ? JSON.parse(e.data) : e.data; } catch { return; }
+      if (!d) return;
+      if (d.event === 'onError') return report('error');
+      const st = d.info && typeof d.info === 'object' ? d.info.playerState : undefined;
+      // YouTube shows its title bar for the first seconds; only then is it clean artwork.
+      if (st === 1) { if (!shown) shown = setTimeout(() => { if (state !== 'ended' && state !== 'error') report('playing'); }, 3000); }
+      else if (st === 0) report('ended');
+      return;
+    }
+    control(e.data);
+  });
+  function control(cmd) {
+    if (cmd === 'unmute') { send('unMute'); send('setVolume', [100]); }
+    else if (cmd === 'mute') send('mute');
+    else if (cmd === 'stop') send('pauseVideo');
+  }
+  window.kinokoTrailer = control; // for the app's WebView
+  // No picture after a while (blocked, removed, embedding disabled): give up.
+  setTimeout(() => { if (!state && !shown) report('error'); }, 12000);
+  document.body.append(frame);
+})();
+</script>
+</body>
+</html>

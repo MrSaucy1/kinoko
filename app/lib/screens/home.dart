@@ -6,6 +6,7 @@ import '../core/api.dart';
 import '../core/theme.dart';
 import '../widgets/cards.dart';
 import '../widgets/common.dart';
+import '../widgets/trailer.dart';
 import 'browse.dart';
 import 'detail.dart';
 import 'player.dart';
@@ -162,11 +163,27 @@ class _HeroState extends State<_Hero> with SingleTickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
-    if (widget.items.length > 1) {
-      _timer = Timer.periodic(const Duration(seconds: 9), (_) {
-        setState(() => _index = (_index + 1) % widget.items.length);
-        _zoom.forward(from: 0);
-      });
+    _rotate();
+  }
+
+  void _next() {
+    setState(() => _index = (_index + 1) % widget.items.length);
+    _zoom.forward(from: 0);
+  }
+
+  void _rotate() {
+    _timer?.cancel();
+    if (widget.items.length > 1) _timer = Timer.periodic(const Duration(seconds: 9), (_) => _next());
+  }
+
+  /// A playing trailer holds the carousel; when it is over the next title follows.
+  void _onTrailer(bool active) {
+    if (!mounted) return;
+    if (active) {
+      _timer?.cancel();
+    } else {
+      if (widget.items.length > 1 && (ModalRoute.of(context)?.isCurrent ?? true)) _next();
+      _rotate();
     }
   }
 
@@ -197,6 +214,8 @@ class _HeroState extends State<_Hero> with SingleTickerProviderStateMixin {
             child: SizedBox.expand(child: NetImage(Device.isTv ? t['backdrop'] : (t['poster'] ?? t['backdrop']), alignment: Alignment.topCenter)),
           ),
         ),
+        // Tv only: on a phone the hero is a portrait poster, a trailer would be cropped to a sliver.
+        if (Device.isTv) TrailerBackdrop(key: ValueKey('trailer-${t['id']}'), trailer: t['trailer'] as String?, onActive: _onTrailer, child: const SizedBox.shrink()),
         DecoratedBox(
           decoration: BoxDecoration(
             gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [K.bg.withValues(alpha: 0.55), Colors.transparent, K.bg.withValues(alpha: 0.75), K.bg], stops: const [0, 0.3, 0.72, 1]),

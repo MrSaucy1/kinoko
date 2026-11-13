@@ -391,13 +391,27 @@ export function playChannel(c) {
   const unmount = mountLayer(el);
   const onKey = (e) => { if (e.key === 'Escape') close(); };
   document.addEventListener('keydown', onKey);
-  function close() { if (hls) hls.destroy(); video.removeAttribute('src'); video.load(); document.removeEventListener('keydown', onKey); unmount(); }
-  const fail = () => toast('Deze zender speelt niet in de browser. In de Kinoko-app werkt hij wel.', 'bad');
-  // Browsers can't play raw MPEG-TS; most providers serve the same channel as HLS.
-  const url = /\/live\/.+\.ts$/.test(c.url) ? c.url.replace(/\.ts$/, '.m3u8') : c.url;
-  if (/\.m3u8(\?|$)/.test(url) && window.Hls && window.Hls.isSupported()) {
-    hls = new window.Hls(); hls.loadSource(url); hls.attachMedia(video);
-    hls.on(window.Hls.Events.ERROR, (_, d) => { if (d.fatal) fail(); });
-  } else { video.src = url; video.addEventListener('error', fail, { once: true }); }
+  function close() { closed = true; if (hls) hls.destroy(); video.removeAttribute('src'); video.load(); document.removeEventListener('keydown', onKey); unmount(); }
+  let closed = false;
+  const busy = h('div.p-center', h('div.spin'));
+  el.querySelector('.stage').append(busy);
+  video.addEventListener('playing', () => busy.remove());
+  const fail = (msg) => { if (closed) return; busy.remove(); toast(msg || 'Deze zender geeft op dit moment geen beeld.', 'bad'); };
+  // The server repackages the channel as HLS, so it plays in any browser and
+  // the provider is never contacted from here.
+  api(`/api/iptv/${c.id}/live`, { method: 'POST' }).then((r) => {
+    if (closed) return;
+    if (window.Hls && window.Hls.isSupported()) {
+      let retries = 0;
+      hls = new window.Hls({ liveSyncDurationCount: 3, manifestLoadingMaxRetry: 4 });
+      hls.loadSource(r.url); hls.attachMedia(video);
+      hls.on(window.Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
+      hls.on(window.Hls.Events.ERROR, (_, d) => {
+        if (!d.fatal) return;
+        if (d.type === window.Hls.ErrorTypes.MEDIA_ERROR && retries++ < 3) return hls.recoverMediaError();
+        fail(d.type === window.Hls.ErrorTypes.MEDIA_ERROR ? 'Je browser kan het videoformaat van deze zender niet afspelen. In de Kinoko-app werkt hij wel.' : null);
+      });
+    } else { video.src = r.url; video.addEventListener('error', () => fail(), { once: true }); }
+  }).catch((e) => fail(e.message));
   api(`/api/iptv/${c.id}/epg`).then((r) => { if (r.programs[0]) epg.textContent = `Nu: ${r.programs[0].title}${r.programs[1] ? ' · Straks: ' + r.programs[1].title : ''}`; }).catch(() => {});
 }

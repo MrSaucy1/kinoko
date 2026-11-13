@@ -1,8 +1,12 @@
 // Live TV: Xtream Codes accounts and M3U playlists, configured once by the
 // admin and available on every device.
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawn } from 'node:child_process';
 import { Readable } from 'node:stream';
 import { db, now, sha256, settings, randomToken, HttpError } from './db.js';
 import { requireUser, requireAdmin } from './auth.js';
+import { config, dataPath } from './config.js';
 
 if (!settings.get('iptv_secret')) settings.set('iptv_secret', randomToken(24));
 const sign = (id) => sha256(`${settings.get('iptv_secret')}:${id}`).slice(0, 24);
@@ -27,6 +31,60 @@ export function parseM3u(text) {
     }
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Country grouping: providers put the country in the category name
+// ("NL | SPORT", "[UK] Kids", "DE: Filme", "Nederland HD").
+// ---------------------------------------------------------------------------
+const COUNTRIES = {
+  NL: 'Nederland', BE: 'België', DE: 'Duitsland', UK: 'Verenigd Koninkrijk', GB: 'Verenigd Koninkrijk', IE: 'Ierland', US: 'Verenigde Staten', USA: 'Verenigde Staten',
+  CA: 'Canada', FR: 'Frankrijk', ES: 'Spanje', IT: 'Italië', PT: 'Portugal', TR: 'Turkije', PL: 'Polen', AT: 'Oostenrijk', CH: 'Zwitserland', LU: 'Luxemburg',
+  DK: 'Denemarken', SE: 'Zweden', NO: 'Noorwegen', FI: 'Finland', IS: 'IJsland', GR: 'Griekenland', RO: 'Roemenië', BG: 'Bulgarije', HU: 'Hongarije', CZ: 'Tsjechië',
+  SK: 'Slowakije', SI: 'Slovenië', HR: 'Kroatië', RS: 'Servië', BA: 'Bosnië', MK: 'Noord-Macedonië', AL: 'Albanië', XK: 'Kosovo', ME: 'Montenegro', UA: 'Oekraïne',
+  RU: 'Rusland', LT: 'Litouwen', LV: 'Letland', EE: 'Estland', MA: 'Marokko', DZ: 'Algerije', TN: 'Tunesië', EG: 'Egypte', IL: 'Israël', IR: 'Iran', IQ: 'Irak',
+  SA: 'Saoedi-Arabië', AE: 'Emiraten', IN: 'India', PK: 'Pakistan', AF: 'Afghanistan', CN: 'China', JP: 'Japan', KR: 'Zuid-Korea', TH: 'Thailand', VN: 'Vietnam',
+  PH: 'Filipijnen', ID: 'Indonesië', AU: 'Australië', NZ: 'Nieuw-Zeeland', BR: 'Brazilië', MX: 'Mexico', CO: 'Colombia', CL: 'Chili', SR: 'Suriname', ZA: 'Zuid-Afrika',
+  AR: 'Arabisch', ARA: 'Arabisch', KU: 'Koerdisch', LAT: 'Latijns-Amerika', LATAM: 'Latijns-Amerika', AFR: 'Afrika', EXYU: 'Ex-Joegoslavië', EU: 'Europa',
+};
+const COUNTRY_WORDS = {
+  NEDERLAND: 'NL', NETHERLANDS: 'NL', HOLLAND: 'NL', DUTCH: 'NL', BELGIE: 'BE', 'BELGIË': 'BE', BELGIUM: 'BE', DEUTSCHLAND: 'DE', GERMANY: 'DE', DUITSLAND: 'DE',
+  ENGLAND: 'UK', FRANCE: 'FR', FRANKRIJK: 'FR', SPAIN: 'ES', SPANJE: 'ES', 'ESPAÑA': 'ES', ITALY: 'IT', ITALIA: 'IT', 'ITALIË': 'IT', PORTUGAL: 'PT', TURKEY: 'TR',
+  'TÜRKIYE': 'TR', TURKIYE: 'TR', TURKIJE: 'TR', POLAND: 'PL', POLSKA: 'PL', POLEN: 'PL', AUSTRIA: 'AT', SWITZERLAND: 'CH', DENMARK: 'DK', SWEDEN: 'SE', NORWAY: 'NO',
+  FINLAND: 'FI', GREECE: 'GR', ROMANIA: 'RO', BULGARIA: 'BG', HUNGARY: 'HU', CROATIA: 'HR', SERBIA: 'RS', ALBANIA: 'AL', UKRAINE: 'UA', RUSSIA: 'RU', MOROCCO: 'MA',
+  MAROC: 'MA', MAROKKO: 'MA', INDIA: 'IN', PAKISTAN: 'PK', CANADA: 'CA', BRAZIL: 'BR', BRASIL: 'BR', MEXICO: 'MX', ARABIC: 'AR', ARAB: 'AR', KURDISH: 'KU', IRAN: 'IR',
+  SURINAME: 'SR', AFRICA: 'AFR', LATINO: 'LAT', IRELAND: 'IE', AUSTRALIA: 'AU',
+};
+const WORDY = new Set(['IN', 'NO', 'IS', 'AT', 'ME', 'ID', 'AL', 'SA', 'MA', 'EU']);
+const OTHER = { code: '', name: 'Overig' };
+const tidy = (s) => s.replace(/^[\s|:\-–—▎►➤✦•★*#/\]\[)(]+|[\s|:\-–—▎►➤✦•★*#/\]\[)(]+$/g, '').trim();
+
+/** "NL | SPORT" → { code: 'NL', country: 'Nederland', label: 'SPORT' } */
+export function splitCategory(raw) {
+  const name = String(raw || '').trim();
+  const out = (code, rest) => ({ code: code === 'GB' ? 'UK' : code === 'USA' ? 'US' : code, country: COUNTRIES[code], label: tidy(rest) || 'Algemeen' });
+  // A code up front, behind any decoration: "|NL| Sport", "[UK] Kids", "DE: Filme", "NL SPORT", "EX-YU | Sport".
+  const m = name.replace(/^EX[\s-]?YU/i, 'EXYU').match(/^[^\p{L}\p{N}]*([A-Z]{2,5})(?![\p{L}\p{N}])(.*)$/u);
+  // Codes that are also everyday words only count with a separator behind them ("NO | Sport", not "NO SIGNAL").
+  if (m && COUNTRIES[m[1]] && !(WORDY.has(m[1]) && /^\s+[\p{L}\p{N}]/u.test(m[2]))) return out(m[1], m[2]);
+  // A country name up front: "Nederland HD", "Germany | Sport".
+  const w = name.match(/^[^\p{L}\p{N}]*([\p{L}]{4,})(?![\p{L}\p{N}])(.*)$/u);
+  if (w && COUNTRY_WORDS[w[1].toUpperCase()]) return out(COUNTRY_WORDS[w[1].toUpperCase()], w[2]);
+  return { code: OTHER.code, country: OTHER.name, label: name || 'Overig' };
+}
+
+/** Categories grouped per country, in the provider's order ("Overig" last). */
+export function groupCategories(cats) {
+  const groups = new Map();
+  for (const c of cats) {
+    const s = splitCategory(c.name);
+    if (!groups.has(s.code)) groups.set(s.code, { code: s.code, name: s.country, count: 0, categories: [] });
+    const g = groups.get(s.code);
+    g.count += c.count;
+    g.categories.push({ name: c.name, label: s.label, count: c.count });
+  }
+  const list = [...groups.values()];
+  return [...list.filter((g) => g.code), ...list.filter((g) => !g.code)];
 }
 
 const xtreamBase = (s) => s.url.replace(/\/+$/, '');
@@ -77,7 +135,71 @@ function channelOut(c, favs, proxy) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Live relay: ffmpeg pulls the channel once and repackages it as HLS. That
+// plays in every browser (which can't do raw MPEG-TS, mixed content or a
+// provider without CORS headers) and keeps the provider login on the server.
+// Viewers of the same channel share one provider connection.
+// ---------------------------------------------------------------------------
+const live = new Map(); // channel id → session
+const LIVE_IDLE = 30_000;
+
+function stopLive(id) {
+  const s = live.get(id);
+  if (!s) return;
+  live.delete(id);
+  try { s.proc.kill('SIGKILL'); } catch { /* already gone */ }
+  fs.rm(s.dir, { recursive: true, force: true }, () => {});
+}
+
+function startLive(channel) {
+  const dir = dataPath('transcode', `live-${channel.id}-${randomToken(4)}`);
+  fs.mkdirSync(dir, { recursive: true });
+  const args = ['-hide_banner', '-loglevel', 'error', '-user_agent', 'VLC/3.0.20 LibVLC/3.0.20',
+    '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5', '-i', channel.url,
+    '-map', '0:v:0?', '-map', '0:a:0?', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '160k', '-ac', '2',
+    '-f', 'hls', '-hls_time', '2', '-hls_list_size', '8', '-hls_flags', 'delete_segments+omit_endlist',
+    '-hls_segment_filename', path.join(dir, '%05d.ts'), path.join(dir, 'index.m3u8')];
+  const proc = spawn(config.ffmpeg, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+  const s = { dir, proc, last: Date.now(), error: '', exited: false };
+  proc.stderr.on('data', (d) => { s.error = (s.error + d).slice(-600); });
+  proc.on('error', (e) => { s.exited = true; s.error = e.message; });
+  proc.on('exit', () => { s.exited = true; if (live.get(channel.id) === s) stopLive(channel.id); });
+  live.set(channel.id, s);
+  return s;
+}
+
+setInterval(() => { const n = Date.now(); for (const [id, s] of live) if (n - s.last > LIVE_IDLE) stopLive(id); }, 10_000).unref();
+for (const d of fs.readdirSync(dataPath('transcode'))) if (d.startsWith('live-')) fs.rmSync(dataPath('transcode', d), { recursive: true, force: true });
+process.on('exit', () => { for (const s of live.values()) { try { s.proc.kill('SIGKILL'); } catch { /* gone */ } } });
+
 export default async function routes(app) {
+  app.post('/api/iptv/:id/live', { preHandler: requireUser }, async (req) => {
+    const c = db.prepare('SELECT id, url FROM iptv_channels WHERE id = ?').get(req.params.id);
+    if (!c) throw new HttpError(404, 'Zender niet gevonden.');
+    const s = live.get(c.id) || startLive(c);
+    s.last = Date.now();
+    const playlist = path.join(s.dir, 'index.m3u8');
+    for (let i = 0; i < 100 && !s.exited && !fs.existsSync(playlist); i++) { await new Promise((r) => setTimeout(r, 200)); s.last = Date.now(); }
+    if (!fs.existsSync(playlist)) {
+      const why = s.error.trim().split('\n').pop() || '';
+      stopLive(c.id);
+      console.warn('[iptv] zender start niet:', why);
+      throw new HttpError(502, /40[134]|Forbidden|Unauthorized/i.test(why) ? 'De provider weigert deze zender (abonnement verlopen of te veel gelijktijdige kijkers?).' : 'Deze zender geeft op dit moment geen beeld.');
+    }
+    return { url: `/api/iptv/live/${c.id}/${sign(c.id)}/index.m3u8` };
+  });
+
+  app.get('/api/iptv/live/:id/:sig/:file', async (req, reply) => {
+    if (req.params.sig !== sign(req.params.id)) throw new HttpError(403, 'Ongeldige link.');
+    const s = live.get(Number(req.params.id));
+    const file = req.params.file;
+    if (!s || !/^(index\.m3u8|\d{5}\.ts)$/.test(file)) throw new HttpError(404, 'De zender is gestopt.');
+    s.last = Date.now();
+    let buf; try { buf = await fs.promises.readFile(path.join(s.dir, file)); } catch { throw new HttpError(404, 'Segment niet gevonden.'); }
+    return reply.header('Content-Type', file.endsWith('.ts') ? 'video/mp2t' : 'application/vnd.apple.mpegurl').header('Cache-Control', 'no-store').send(buf);
+  });
+
   app.get('/api/iptv', { preHandler: requireUser }, async (req) => {
     const favs = new Set(db.prepare('SELECT channel_id FROM iptv_favs WHERE user_id = ?').all(req.user.id).map((r) => r.channel_id));
     const proxy = new Map(db.prepare('SELECT id, proxy FROM iptv_sources').all().map((s) => [s.id, !!s.proxy]));
@@ -88,7 +210,8 @@ export default async function routes(app) {
     else if (q) rows = db.prepare("SELECT * FROM iptv_channels WHERE name LIKE ? ESCAPE '\\' ORDER BY ord LIMIT 300").all(`%${String(q).replace(/[\\%_]/g, '\\$&')}%`);
     else if (category) rows = db.prepare('SELECT * FROM iptv_channels WHERE category = ? ORDER BY ord LIMIT 2000').all(category);
     else rows = [];
-    return { enabled: cats.length > 0, categories: cats.map((c) => ({ name: c.category, count: c.n })), favorites: favs.size, channels: rows.map((c) => channelOut(c, favs, proxy)) };
+    const categories = cats.map((c) => ({ name: c.category, count: c.n }));
+    return { enabled: cats.length > 0, categories, groups: groupCategories(categories), favorites: favs.size, channels: rows.map((c) => channelOut(c, favs, proxy)) };
   });
 
   app.put('/api/iptv/fav/:id', { preHandler: requireUser }, async (req) => {

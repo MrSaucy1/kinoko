@@ -110,7 +110,11 @@ class _PlayerScreenState extends State<PlayerScreen> with TickerProviderStateMix
         if (done) _onCompleted();
       }),
       _player.stream.error.listen((e) {
-        if (mounted && !_ready) setState(() => _error = 'Afspelen lukt niet: $e');
+        if (_isLive && !_relayTried) {
+          _liveFallback();
+        } else if (mounted && (!_ready || (_isLive && _pos == Duration.zero))) {
+          setState(() => _error = _isLive ? 'Deze zender geeft op dit moment geen beeld.' : 'Afspelen lukt niet: $e');
+        }
       }),
     ]);
     _countdown.addStatusListener((s) {
@@ -141,6 +145,7 @@ class _PlayerScreenState extends State<PlayerScreen> with TickerProviderStateMix
     _skipFocus.dispose();
     _nextFocus.dispose();
     _chat.dispose();
+    _liveWatch?.cancel();
     if (!Device.isTv) {
       SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
@@ -155,6 +160,10 @@ class _PlayerScreenState extends State<PlayerScreen> with TickerProviderStateMix
       if (_isLive) {
         _title = (req.channel!['name'] ?? '').toString();
         await _player.open(Media(api.abs(req.channel!['url'])!));
+        // No picture straight from the provider: let the server relay it.
+        _liveWatch = Timer(const Duration(seconds: 10), () {
+          if (_pos == Duration.zero) _liveFallback();
+        });
         _loadEpg();
       } else if (_isOffline) {
         final d = req.offline!;
@@ -187,6 +196,25 @@ class _PlayerScreenState extends State<PlayerScreen> with TickerProviderStateMix
       }
       if (mounted) setState(() => _ready = true);
       _wake();
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    }
+  }
+
+  /// Second attempt for a channel: the server pulls it and hands us plain HLS.
+  bool _relayTried = false;
+  Timer? _liveWatch;
+  Future<void> _liveFallback() async {
+    if (_relayTried || !mounted) return;
+    _relayTried = true;
+    _liveWatch?.cancel();
+    try {
+      final r = await api.post('/api/iptv/${widget.req.channel!['id']}/live', const {});
+      if (!mounted) return;
+      await _player.open(Media(api.abs(r['url'])!));
+      _liveWatch = Timer(const Duration(seconds: 20), () {
+        if (mounted && _pos == Duration.zero) setState(() => _error = 'Deze zender geeft op dit moment geen beeld.');
+      });
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
     }

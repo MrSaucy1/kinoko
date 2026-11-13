@@ -130,10 +130,11 @@ export function openModal(content, { small = false, onClose } = {}) {
   const onKey = (e) => { if (e.key === 'Escape' && layer().lastElementChild === scrim) close(); };
   const modal = h(`div.modal${small ? '.small' : ''}`, h('button.icon-btn.modal-close', { onclick: close, 'aria-label': 'Sluiten' }, icon('x')), content);
   const scrim = h('div.scrim', { onmousedown: (e) => { if (e.target === scrim) close(); } }, modal);
+  document.dispatchEvent(new Event('kinoko:layer'));
   layer().append(scrim); document.body.classList.add('locked'); document.addEventListener('keydown', onKey);
   return { close, modal };
 }
-export function mountLayer(el) { layer().append(el); document.body.classList.add('locked'); return () => { el.remove(); if (!layer().children.length) document.body.classList.remove('locked'); }; }
+export function mountLayer(el) { document.dispatchEvent(new Event('kinoko:layer')); layer().append(el); document.body.classList.add('locked'); return () => { el.remove(); if (!layer().children.length) document.body.classList.remove('locked'); }; }
 
 export function confirmDialog(title, text, okLabel = 'Bevestigen') {
   return new Promise((resolve) => {

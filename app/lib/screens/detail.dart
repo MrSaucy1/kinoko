@@ -5,6 +5,7 @@ import '../core/theme.dart';
 import '../services/downloads.dart';
 import '../widgets/cards.dart';
 import '../widgets/common.dart';
+import '../widgets/trailer.dart';
 import 'browse.dart';
 import 'player.dart';
 
@@ -108,7 +109,12 @@ class _DetailScreenState extends State<DetailScreen> {
       SizedBox(
         height: Device.isTv ? size.height * 0.6 : (size.width * 0.72).clamp(260.0, 420.0),
         child: Stack(fit: StackFit.expand, children: [
-          NetImage(d['backdrop'] ?? d['poster'], alignment: Alignment.topCenter),
+          TrailerBackdrop(
+            trailer: d['trailer'] as String?,
+            delay: const Duration(milliseconds: 1500),
+            soundButton: Device.isTv ? null : Alignment.topRight,
+            child: NetImage(d['backdrop'] ?? d['poster'], alignment: Alignment.topCenter),
+          ),
           DecoratedBox(decoration: BoxDecoration(gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [K.bg.withValues(alpha: 0.4), Colors.transparent, K.bg], stops: const [0, 0.35, 1]))),
           if (!Device.isTv) Positioned(top: MediaQuery.paddingOf(context).top + 8, left: 10, child: RoundIcon(Icons.arrow_back_rounded, tooltip: 'Terug', onTap: () => Navigator.pop(context))),
           Positioned(

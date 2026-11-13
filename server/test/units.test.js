@@ -100,3 +100,16 @@ test('passwords are hashed and verified', () => {
   assert.ok(verifyPassword('geheim123', h));
   assert.ok(!verifyPassword('anders', h));
 });
+
+test('iptv categories are grouped per country', async () => {
+  const { splitCategory, groupCategories } = await import('../src/iptv.js');
+  assert.deepEqual(splitCategory('NL | SPORT'), { code: 'NL', country: 'Nederland', label: 'SPORT' });
+  assert.equal(splitCategory('[UK] Kids').code, 'UK');
+  assert.equal(splitCategory('Germany | Sport').country, 'Duitsland');
+  assert.equal(splitCategory('US').label, 'Algemeen');
+  // Not a country: ordinary words and quality tags stay where they are.
+  assert.equal(splitCategory('NO SIGNAL').code, '');
+  assert.equal(splitCategory('4K Channels').label, '4K Channels');
+  const groups = groupCategories([{ name: 'Sport', count: 2 }, { name: 'NL | Sport', count: 5 }, { name: 'NL | Kids', count: 3 }]);
+  assert.deepEqual(groups.map((g) => [g.name, g.count]), [['Nederland', 8], ['Overig', 2]]);
+});

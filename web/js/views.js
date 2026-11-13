@@ -101,6 +101,39 @@ function skeleton() {
 }
 
 // ---------------------------------------------------------------------------
+// Trailers: a muted YouTube trailer fades in over the artwork, like Netflix.
+// ---------------------------------------------------------------------------
+let soundOn = false; // the viewer's choice sticks for the rest of the visit
+
+/** Plays trailer `id` over `host`; `onDone(reason)` fires once: 'ended', 'error' or 'stopped'. */
+function playTrailer(id, host, { onPlaying, onDone } = {}) {
+  const frame = h('iframe.trailer', { src: `/trailer.html?v=${encodeURIComponent(id)}`, allow: 'autoplay; encrypted-media', tabIndex: -1, 'aria-hidden': 'true', title: 'Trailer' });
+  const say = (cmd) => frame.contentWindow && frame.contentWindow.postMessage(cmd, location.origin);
+  const mute = h('button.icon-btn.trailer-mute', { 'aria-label': 'Geluid van de trailer', title: 'Geluid aan/uit', onclick: (e) => { e.stopPropagation(); soundOn = !soundOn; say(soundOn ? 'unmute' : 'mute'); mute.replaceChildren(icon(soundOn ? 'vol' : 'mute')); } }, icon(soundOn ? 'vol' : 'mute'));
+  let over = false;
+  function finish(reason) {
+    if (over) return;
+    over = true;
+    window.removeEventListener('message', onMsg); document.removeEventListener('kinoko:layer', onLayer);
+    frame.classList.remove('on'); mute.remove();
+    setTimeout(() => frame.remove(), 700);
+    if (onDone) onDone(reason);
+  }
+  function onMsg(e) {
+    if (e.source !== frame.contentWindow || !e.data || !e.data.kinokoTrailer) return;
+    const what = e.data.kinokoTrailer;
+    if (what === 'playing') { if (soundOn) say('unmute'); frame.classList.add('on'); host.append(mute); if (onPlaying) onPlaying(); }
+    else finish(what === 'ended' ? 'ended' : 'error');
+  }
+  const onLayer = () => finish('stopped');
+  window.addEventListener('message', onMsg);
+  // Anything that opens on top (a player, a dialog) silences the trailer.
+  setTimeout(() => { if (!over) document.addEventListener('kinoko:layer', onLayer); });
+  host.append(frame);
+  return { stop: () => finish('stopped') };
+}
+
+// ---------------------------------------------------------------------------
 // Home
 // ---------------------------------------------------------------------------
 function hero(items) {
@@ -121,13 +154,40 @@ function hero(items) {
   function show(i, manual) {
     slides[index].classList.remove('on'); dots.children[index].classList.remove('on');
     index = i; slides[index].classList.add('on'); dots.children[index].classList.add('on'); fill(items[index]);
-    if (manual) { clearInterval(timer); timer = setInterval(next, 9000); }
+    if (manual) rotate();
+    queueTrailer();
   }
   const next = () => show((index + 1) % items.length);
+  const rotate = () => { clearInterval(timer); if (items.length > 1) timer = setInterval(next, 9000); };
+  // After a moment on a slide its trailer takes over; the carousel waits until it ends.
+  let trailer = null, wait;
+  function stopTrailer() { clearTimeout(wait); if (trailer) trailer.stop(); }
+  function queueTrailer() {
+    stopTrailer();
+    const t = items[index];
+    if (!t.trailer || innerWidth < 700) return;
+    wait = setTimeout(() => {
+      if (!el.isConnected || document.hidden || document.body.classList.contains('locked') || scrollY > el.offsetHeight * 0.5) return;
+      clearInterval(timer); // hold the slide while the trailer loads
+      const mine = trailer = playTrailer(t.trailer, el, {
+        onPlaying: () => el.classList.add('playing'),
+        onDone: (reason) => {
+          if (trailer === mine) trailer = null;
+          el.classList.remove('playing');
+          if (!el.isConnected) return;
+          if (reason === 'ended' && items.length > 1) next();
+          rotate();
+        },
+      });
+    }, 2500);
+  }
   fill(items[0]);
-  if (items.length > 1) timer = setInterval(next, 9000);
   const el = h('section.hero', slides, info, items.length > 1 && dots);
-  el.stop = () => clearInterval(timer);
+  rotate();
+  const onScroll = () => { if (scrollY > el.offsetHeight * 0.6) stopTrailer(); };
+  window.addEventListener('scroll', onScroll, { passive: true });
+  el.stop = () => { clearInterval(timer); stopTrailer(); window.removeEventListener('scroll', onScroll); };
+  queueTrailer();
   return el;
 }
 
@@ -194,7 +254,8 @@ export async function openDetail(id) {
   let d; try { d = await api(`/api/titles/${id}`); } catch (e) { return toast(e.message, 'bad'); }
   const sel = { fileId: null, quality: 'original' };
   const body = h('div');
-  const m = openModal(body);
+  let trailer = null, trailerWait;
+  const m = openModal(body, { onClose: () => { clearTimeout(trailerWait); if (trailer) trailer.stop(); } });
   const play = (opts = {}) => { m.close(); startPlayback({ titleId: d.id, fileId: sel.fileId, quality: sel.quality, ...opts }); };
 
   const listBtn = h(`button.icon-btn${d.inList ? '.on' : ''}`, { title: 'Mijn lijst', 'aria-label': 'Mijn lijst', onclick: () => act(listBtn, async () => {
@@ -205,6 +266,7 @@ export async function openDetail(id) {
   const head = h('div.d-hero', d.backdrop && h('img', { src: d.backdrop, alt: '' }), h('div.d-head', h('h1', d.title)));
   const actions = h('div.row.wrap');
   head.querySelector('.d-head').append(actions);
+  if (d.trailer) trailerWait = setTimeout(() => { if (head.isConnected) trailer = playTrailer(d.trailer, head, { onDone: () => { trailer = null; } }); }, 1200);
 
   const meta = h('div.hero-meta', { style: { margin: '0 0 14px' } }, d.rating && h('span', h('span.star', '★ '), d.rating.toFixed(1)), d.year && h('span', d.year),
     d.kind === 'movie' ? d.runtime && h('span', fmtRuntime(d.runtime)) : h('span', `${d.seasons.length} seizoen${d.seasons.length === 1 ? '' : 'en'}`));
@@ -352,31 +414,48 @@ export async function openWatchNight() {
 // Live TV
 // ---------------------------------------------------------------------------
 export async function liveView() {
-  const list = h('div.channels'), cats = h('div.live-cats');
-  const off = shell('live', h('div.live', cats, list));
+  const list = h('div.channels'), cats = h('div.live-cats'), side = h('div.live-side');
+  const off = shell('live', h('div.live', side, list));
   let current = null;
-  async function load(params, key) {
+  async function load(params, key, title) {
     current = key;
     list.replaceChildren(Array.from({ length: 9 }, () => h('div.skel', { style: { height: '72px' } })));
     let d; try { d = await api(`/api/iptv?${params}`); } catch (e) { return toast(e.message, 'bad'); }
     if (current !== key) return;
-    for (const b of cats.children) b.classList.toggle('on', b.dataset.key === key);
-    list.replaceChildren(d.channels.length ? d.channels.map((c) => {
+    mark();
+    list.replaceChildren(h('h2.live-title', title, h('span.faint', ` ${d.channels.length}`)), d.channels.length ? d.channels.map((c) => {
       const star = h('button', { title: 'Favoriet', 'aria-label': 'Favoriet', style: { color: c.favorite ? '#fcd34d' : 'var(--faint)', fontSize: '18px' }, onclick: (e) => { e.stopPropagation(); act(star, async () => { const r = await api(`/api/iptv/fav/${c.id}`, { method: c.favorite ? 'DELETE' : 'PUT' }); c.favorite = r.favorite; star.style.color = c.favorite ? '#fcd34d' : 'var(--faint)'; }); } }, '★');
       return h('div.channel', { role: 'button', tabIndex: 0, onclick: () => playChannel(c), onkeydown: (e) => { if (e.key === 'Enter') playChannel(c); } },
         c.logo ? h('img', { src: c.logo, alt: '', loading: 'lazy', onerror: (e) => e.target.replaceWith(h('div.ph', c.name[0])) }) : h('div.ph', c.name[0]),
         h('div.grow', h('b', c.name), h('small.faint', c.category)), star);
     }) : h('p.muted', key === 'fav' ? 'Nog geen favorieten. Tik op de ster bij een zender.' : 'Geen zenders gevonden.'));
   }
+  const mark = () => { for (const b of side.querySelectorAll('button[data-key]')) b.classList.toggle('on', b.dataset.key === current); };
   let d; try { d = await api('/api/iptv'); } catch (e) { toast(e.message, 'bad'); return off; }
   if (!d.enabled) {
     document.querySelector('main').replaceChildren(h('div.empty', h('h2', 'Live tv staat nog uit'), h('p', 'Voeg in Beheer een IPTV-abonnement (Xtream) of M3U-playlist toe.'), state.user.role === 'admin' && h('a.btn.primary', { href: '/beheer/live-tv' }, 'Live tv instellen')));
     return off;
   }
-  const search = h('input.input', { type: 'search', placeholder: 'Zender zoeken', style: { marginBottom: '10px', height: '40px' }, oninput: () => { const q = search.value.trim(); if (q.length >= 2) load(`q=${encodeURIComponent(q)}`, 'q:' + q); } });
-  cats.append(search, h('button', { 'data-key': 'fav', onclick: () => load('fav=1', 'fav') }, '★ Favorieten', h('span.faint', d.favorites)),
-    d.categories.map((c) => h('button', { 'data-key': 'c:' + c.name, onclick: () => load(`category=${encodeURIComponent(c.name)}`, 'c:' + c.name) }, c.name, h('span.faint', c.count))));
-  if (d.favorites) load('fav=1', 'fav'); else if (d.categories[0]) load(`category=${encodeURIComponent(d.categories[0].name)}`, 'c:' + d.categories[0].name);
+  // Country → category → channels. Without recognisable countries it stays a flat list.
+  const groups = d.groups && d.groups.length ? d.groups : [{ code: '', name: 'Overig', count: 0, categories: d.categories.map((c) => ({ ...c, label: c.name })) }];
+  const flat = groups.length === 1;
+  const openCat = (g, c) => load(`category=${encodeURIComponent(c.name)}`, 'c:' + c.name, flat ? c.label : `${g.name} · ${c.label}`);
+  function showCountries() {
+    cats.replaceChildren(h('div.live-label', 'Landen'), groups.map((g) => h('button.country', { onclick: () => showCountry(g, true) }, g.code && h('span.cc', g.code), h('span.grow', g.name), h('span.faint', g.count), icon('right'))));
+  }
+  function showCountry(g, open) {
+    try { localStorage.setItem('kinoko_live_country', g.code); } catch { /* private mode */ }
+    cats.replaceChildren(!flat && h('button.back', { onclick: showCountries }, icon('left'), 'Alle landen'), h('div.live-label', flat ? 'Categorieën' : g.name),
+      g.categories.map((c) => h('button', { 'data-key': 'c:' + c.name, onclick: () => openCat(g, c) }, h('span.grow', c.label), h('span.faint', c.count))));
+    mark();
+    if (open && g.categories[0]) openCat(g, g.categories[0]);
+  }
+  const search = h('input.input', { type: 'search', placeholder: 'Zender zoeken', oninput: () => { const q = search.value.trim(); if (q.length >= 2) load(`q=${encodeURIComponent(q)}`, 'q:' + q, `Zoeken: ${q}`); } });
+  side.append(search, h('button.fav', { 'data-key': 'fav', onclick: () => load('fav=1', 'fav', 'Favorieten') }, h('span.grow', '★ Favorieten'), h('span.faint', d.favorites)), cats);
+  let saved = null; try { saved = localStorage.getItem('kinoko_live_country'); } catch { /* private mode */ }
+  const start = groups.find((g) => g.code === saved) || groups[0];
+  showCountry(start, !d.favorites);
+  if (d.favorites) load('fav=1', 'fav', 'Favorieten');
   return off;
 }
 

@@ -23,6 +23,10 @@ dependencies:
   media_kit_video: ^1.2.5
   media_kit_libs_android_video: ^1.3.6
 
+  # Trailers: de YouTube-embed van de server draait in een WebView
+  webview_flutter: ^4.10.0
+  webview_flutter_android: ^4.3.0
+
   # Uitnodigingslinks (kinoko://…) openen de app
   app_links: ^6.3.2
 

@@ -208,7 +208,7 @@ export function home(userId, kind = null) {
   }
 
   const heroPool = all.filter((t) => t.backdrop && t.overview);
-  const hero = shuffle(heroPool.sort((a, b) => (b.file_added || 0) - (a.file_added || 0)).slice(0, 30), rnd).slice(0, 6).map(card);
+  const hero = shuffle(heroPool.sort((a, b) => (b.file_added || 0) - (a.file_added || 0)).slice(0, 30), rnd).slice(0, 6).map((t) => ({ ...card(t), trailer: t.trailer || null }));
   return { hero, rows, genres: [...byGenre.keys()].sort((a, b) => a.localeCompare(b)), empty: all.length === 0 };
 }
 

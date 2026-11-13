@@ -17,6 +17,8 @@ class _LiveScreenState extends State<LiveScreen> {
   Json? _base;
   List<Json> _channels = [];
   String _key = '';
+  // Country → category → channels; null shows the list of countries.
+  Json? _country;
   String? _error;
   bool _loading = true;
   Timer? _debounce;
@@ -42,11 +44,12 @@ class _LiveScreenState extends State<LiveScreen> {
         _loading = false;
         _error = null;
       });
-      final cats = listOf(d['categories']);
+      final groups = _groups;
       if ((d['favorites'] as num? ?? 0) > 0) {
+        if (groups.length == 1) _country = groups.first;
         _open('fav', 'fav=1');
-      } else if (cats.isNotEmpty) {
-        _open('c:${cats.first['name']}', 'category=${Uri.encodeQueryComponent(cats.first['name'].toString())}');
+      } else if (groups.isNotEmpty) {
+        _pickCountry(groups.first);
       }
     } catch (e) {
       if (mounted) {
@@ -56,6 +59,31 @@ class _LiveScreenState extends State<LiveScreen> {
         });
       }
     }
+  }
+
+  /// Channel groups per country. Older servers only send flat categories.
+  List<Json> get _groups {
+    final g = listOf(_base?['groups']);
+    if (g.isNotEmpty) return g;
+    final cats = listOf(_base?['categories']);
+    if (cats.isEmpty) return const [];
+    return [
+      {
+        'code': '',
+        'name': 'Categorieën',
+        'categories': [
+          for (final c in cats) {...c, 'label': c['name']},
+        ],
+      }
+    ];
+  }
+
+  void _openCategory(Json c) => _open('c:${c['name']}', 'category=${Uri.encodeQueryComponent(c['name'].toString())}');
+
+  void _pickCountry(Json g) {
+    setState(() => _country = g);
+    final cats = listOf(g['categories']);
+    if (cats.isNotEmpty) _openCategory(cats.first);
   }
 
   Future<void> _open(String key, String query) async {
@@ -104,10 +132,16 @@ class _LiveScreenState extends State<LiveScreen> {
         ),
       );
     }
-    final cats = listOf(_base!['categories']);
+    final groups = _groups;
+    final country = _country;
     final catList = [
       Pill('★ Favorieten', selected: _key == 'fav', onTap: () => _open('fav', 'fav=1')),
-      for (final c in cats) Pill('${c['name']}', selected: _key == 'c:${c['name']}', onTap: () => _open('c:${c['name']}', 'category=${Uri.encodeQueryComponent(c['name'].toString())}')),
+      if (country == null)
+        for (final g in groups) Pill('${g['name']}  ›', onTap: () => _pickCountry(g))
+      else ...[
+        if (groups.length > 1) Pill('‹  ${country['name']}', onTap: () => setState(() => _country = null)),
+        for (final c in listOf(country['categories'])) Pill('${c['label'] ?? c['name']}', selected: _key == 'c:${c['name']}', onTap: () => _openCategory(c)),
+      ],
     ];
     final grid = _loading
         ? const Center(child: CircularProgressIndicator(color: K.orchid))
