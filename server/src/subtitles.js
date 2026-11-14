@@ -6,6 +6,7 @@ import { db, json, HttpError } from './db.js';
 import { config, dataPath } from './config.js';
 import { run, shortLang } from './ffmpeg.js';
 import { requireUser } from './auth.js';
+import { requireFile } from './access.js';
 import { onScanFinished } from './library.js';
 
 const LANG_NAMES = { nl: 'Nederlands', en: 'Engels', de: 'Duits', fr: 'Frans', es: 'Spaans', it: 'Italiaans', pt: 'Portugees', tr: 'Turks', ar: 'Arabisch', ja: 'Japans', ko: 'Koreaans', ru: 'Russisch', zh: 'Chinees', pl: 'Pools', sv: 'Zweeds', da: 'Deens', no: 'Noors', fi: 'Fins', und: 'Onbekend' };
@@ -126,15 +127,13 @@ export default async function routes(app) {
   });
 
   app.get('/api/files/:id/subtitles/search', { preHandler: requireUser }, async (req) => {
-    const file = db.prepare('SELECT * FROM files WHERE id = ?').get(req.params.id);
-    if (!file) throw new HttpError(404, 'Bestand niet gevonden.');
+    const file = requireFile(req.user, req.params.id, 'Bestand niet gevonden.');
     const langs = String(req.query.langs || 'nl,en').split(',').map((s) => s.trim()).filter(Boolean);
     if (file.peer_id) { if (!remote) throw new HttpError(501, 'Niet beschikbaar.'); return remote.search(file, langs); }
     return { results: await searchOnline(file, langs) };
   });
   app.post('/api/files/:id/subtitles/download', { preHandler: requireUser }, async (req) => {
-    const file = db.prepare('SELECT * FROM files WHERE id = ?').get(req.params.id);
-    if (!file) throw new HttpError(404, 'Bestand niet gevonden.');
+    const file = requireFile(req.user, req.params.id, 'Bestand niet gevonden.');
     if (file.peer_id) { if (!remote) throw new HttpError(501, 'Niet beschikbaar.'); return remote.download(file, req.body || {}); }
     const { issueTicket } = await import('./stream.js');
     const sub = await downloadOnline(file, req.body || {});

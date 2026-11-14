@@ -6,6 +6,7 @@ import { requireUser, userFromToken, tokenFromRequest } from './auth.js';
 import { card } from './catalog.js';
 import { playLocal, applyLimit, limitFor, stripOriginal } from './stream.js';
 import { remotePlay } from './federation.js';
+import { requireFile, canSeeFile, scopeFor } from './access.js';
 
 const rooms = new Map();
 const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
@@ -56,8 +57,7 @@ setInterval(() => {
 export default async function routes(app) {
   app.post('/api/watch', { preHandler: requireUser }, async (req) => {
     const { fileId, position = 0 } = req.body || {};
-    const file = db.prepare('SELECT * FROM files WHERE id = ?').get(Number(fileId));
-    if (!file) throw new HttpError(404, 'Deze versie bestaat niet meer.');
+    const file = requireFile(req.user, fileId);
     let code; do { code = newCode(); } while (rooms.has(code));
     rooms.set(code, {
       code, hostName: req.user.name, hostLimit: limitFor(req.user), titleId: file.title_id, episodeId: file.episode_id || 0, fileId: file.id,
@@ -67,7 +67,17 @@ export default async function routes(app) {
     return { code, path: `/w/${code}` };
   });
 
-  app.get('/api/watch/:code', async (req) => describe(getRoom(req.params.code)));
+  // An account that may not see what the room plays is turned away, even with the code.
+  const allowedIn = (room, user) => {
+    if (!user) return;
+    const file = db.prepare('SELECT * FROM files WHERE id = ?').get(room.fileId);
+    if (file && !canSeeFile(scopeFor(user), file)) throw new HttpError(403, 'Je account heeft geen toegang tot wat hier wordt gekeken.');
+  };
+  app.get('/api/watch/:code', async (req) => {
+    const room = getRoom(req.params.code);
+    allowedIn(room, userFromToken(tokenFromRequest(req)));
+    return describe(room);
+  });
 
   app.post('/api/watch/:code/guest', async (req) => {
     const room = getRoom(req.params.code);
@@ -84,6 +94,7 @@ export default async function routes(app) {
     const room = getRoom(req.params.code);
     const me = identify(room, req);
     if (!me) throw new HttpError(401, 'Doe eerst mee met de kijksessie.');
+    allowedIn(room, me.user);
     const file = db.prepare('SELECT * FROM files WHERE id = ?').get(room.fileId);
     if (!file) throw new HttpError(404, 'Deze versie bestaat niet meer.');
     // A guest watches under the limit of whoever opened the room.
@@ -96,6 +107,7 @@ export default async function routes(app) {
     const room = rooms.get(String(req.params.code || '').toUpperCase());
     const me = room && identify(room, req);
     if (!me) { socket.close(4001, 'unauthorized'); return; }
+    try { allowedIn(room, me.user); } catch { socket.close(4003, 'forbidden'); return; }
     room.clients.set(socket, me);
     socket.send(JSON.stringify({ t: 'hello', you: me.id, room: describe(room), state: currentState(room), now: Date.now() }));
     broadcast(room, { t: 'members', members: members(room), joined: me.name }, socket);
@@ -114,9 +126,11 @@ export default async function routes(app) {
           // Switching episode/version is for account holders; guests follow.
           if (me.guest) return;
           const file = db.prepare('SELECT * FROM files WHERE id = ?').get(Number(m.fileId));
-          if (!file) return;
+          if (!file || !canSeeFile(scopeFor(me.user), file)) return;
           Object.assign(room, { fileId: file.id, titleId: file.title_id, episodeId: file.episode_id || 0 });
           room.state = { playing: false, position: 0, at: Date.now() };
+          // Whoever may not see the new file leaves the room before it is announced.
+          for (const [sock, c] of room.clients) if (c.user && !canSeeFile(scopeFor(c.user), file)) { room.clients.delete(sock); try { sock.close(4003, 'forbidden'); } catch { /* closing */ } }
           broadcast(room, { t: 'load', by: me.name, byId: me.id, room: describe(room), state: currentState(room) });
           break;
         }

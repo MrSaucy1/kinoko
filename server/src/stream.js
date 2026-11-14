@@ -9,6 +9,7 @@ import { activeBackend } from './ffmpeg.js';
 import { requireUser, requireAdmin, tokenFromRequest, sessionId } from './auth.js';
 import { notifyUser } from './events.js';
 import { emit } from './webhooks.js';
+import { requireFile, requireTitle, scopeFor } from './access.js';
 
 export const SEG = 4; // seconds per HLS segment
 export const QUALITIES = {
@@ -319,8 +320,7 @@ export default async function routes(app) {
 
   app.post('/api/play', { preHandler: requireUser }, async (req) => {
     const body = req.body || {};
-    const file = db.prepare('SELECT * FROM files WHERE id = ?').get(Number(body.fileId));
-    if (!file) throw new HttpError(404, 'Deze versie bestaat niet meer.');
+    const file = requireFile(req.user, body.fileId);
     const lim = applyLimit(file, body, limitFor(req.user));
     let play;
     if (file.peer_id) {
@@ -334,14 +334,15 @@ export default async function routes(app) {
 
   app.post('/api/extras/:id/play', { preHandler: requireUser }, async (req) => {
     const x = db.prepare('SELECT * FROM extras WHERE id = ?').get(Number(req.params.id));
-    if (!x) throw new HttpError(404, 'Dit extra bestaat niet meer.');
+    const scope = scopeFor(req.user);
+    if (!x || !(scope.all || scope.libs.has(x.library_id))) throw new HttpError(404, 'Dit extra bestaat niet meer.');
     return playExtra(x, req.body || {}, limitFor(req.user));
   });
 
   // Subtitle timing correction, remembered per user and file.
   app.put('/api/files/:id/sub-offset', { preHandler: requireUser }, async (req) => {
     const fileId = Number(req.params.id), ms = Math.round(Number(req.body?.offsetMs));
-    if (!db.prepare('SELECT 1 FROM files WHERE id = ?').get(fileId)) throw new HttpError(404, 'Deze versie bestaat niet meer.');
+    requireFile(req.user, fileId);
     if (!Number.isFinite(ms) || Math.abs(ms) > 600_000) throw new HttpError(400, 'Ongeldige verschuiving.');
     if (ms === 0) db.prepare('DELETE FROM sub_offsets WHERE user_id = ? AND file_id = ?').run(req.user.id, fileId);
     else db.prepare('INSERT INTO sub_offsets (user_id, file_id, offset_ms) VALUES (?,?,?) ON CONFLICT(user_id, file_id) DO UPDATE SET offset_ms = excluded.offset_ms').run(req.user.id, fileId, ms);
@@ -350,7 +351,7 @@ export default async function routes(app) {
 
   app.post('/api/progress', { preHandler: requireUser }, async (req) => {
     const { titleId, episodeId = 0, position = 0, duration = 0, watched, paused } = req.body || {};
-    if (!db.prepare('SELECT 1 FROM titles WHERE id = ?').get(Number(titleId))) throw new HttpError(404, 'Titel niet gevonden.');
+    requireTitle(req.user, titleId);
     const key = [req.user.id, Number(titleId), Number(episodeId) || 0];
     const prev = db.prepare('SELECT watched FROM progress WHERE user_id = ? AND title_id = ? AND episode_id = ?').get(...key);
     // Explicit true/false marks (un)watched; otherwise it follows the position.
