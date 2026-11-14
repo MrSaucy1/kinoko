@@ -28,6 +28,13 @@ install/  Proxmox-helperscript, installer en de root-beheerhulp
 | **Downloads** | In de mobiele app, hervatbaar, offline af te spelen. |
 | **Watch Night** | Thema op basis van seizoen/feestdag en drie gedobbelde films. |
 | **Live tv** | Xtream Codes of M3U, één keer ingesteld door de beheerder. |
+| **Extra's** | Trailers, featurettes en making-ofs (`Extras/`, `Trailers/`, `Film-trailer.mkv`…) staan op de pagina van de titel. |
+| **Nieuwe bestanden** | Mappen worden bewaakt: een nieuw of verwijderd bestand is binnen ongeveer een minuut verwerkt. De periodieke scan blijft als vangnet voor netwerkschijven. |
+| **Voorkeuren per serie** | De gekozen audiotaal en ondertitel gelden vanzelf voor de volgende afleveringen. Ondertitels zijn per 0,1 s te verschuiven. |
+| **Verder op een ander apparaat** | Pauzeer je ergens, dan vraagt een ander open apparaat of je daar verder wilt kijken. |
+| **Limiet per gebruiker** | De beheerder stelt per account een maximale streamkwaliteit in. |
+| **Back-ups** | Dagelijks een kopie van de database; in het beheer te maken en te downloaden. |
+| **Meldingen** | Webhooks (Discord of algemene JSON) bij een nieuwe titel, een kijker, een afgeronde scan of een fout. |
 | **Apparaten** | Per account zie je waar je bent ingelogd en log je een apparaat uit; ongebruikte sessies verlopen vanzelf. |
 | **Externe toegang** | Tailscale, Cloudflare Tunnel of eigen domein, in te stellen vanuit het beheer. |
 

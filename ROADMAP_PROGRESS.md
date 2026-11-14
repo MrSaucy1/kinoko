@@ -44,3 +44,22 @@ Open / niet getest:
 - Helper en `install.sh` zijn niet als root op een echte installatie gedraaid (wel in een zandbak met zeven scenario's).
 - Het scherm "Apparaten" is niet op een toestel bekeken.
 - shellcheck is hier niet beschikbaar.
+
+## Fase 1 — Snelle verbeteringen
+
+- Status: **klaar**
+- Branch: `feat/quick-wins` (vanaf `fix/security-hardening`)
+- PR: https://github.com/MrSaucy1/kinoko/compare/fix/security-hardening...feat/quick-wins?expand=1 — tekst in `docs/pr/fase-1.md`
+
+Gedaan: bestandswatcher, back-ups, voorkeuren per serie, ondertitel-offset, verder kijken op ander apparaat, extra's, limiet per gebruiker, webhooks. Migratie 1.
+
+Keuzes:
+- `npm test` draait nu alle bestanden in `server/test/`; `helpers.js` blokkeert internet in tests.
+- Extra met achtervoegsel telt alleen als het hoofdbestand ernaast staat.
+- Gasten in een kijkkamer vallen onder de limiet van de host.
+- Webhook-adressen worden gemaskeerd teruggegeven (het adres is bij Discord een geheim).
+- Het meldingskanaal `/api/events/ws` is algemeen opgezet; fase 5 (stream stoppen) en fase 8 (Connect) gebruiken het ook.
+
+Open / niet getest:
+- App: timing, serievoorkeuren, extra's en het aanbod "Verder kijken" zijn alleen met `flutter analyze` gecontroleerd, niet op een toestel.
+- Audiotaal bij direct afspelen in de browser kan niet zonder omzetten; de browser schakelt dan naar de hoogste omgezette kwaliteit (bestaand gedrag).
