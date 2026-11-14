@@ -203,3 +203,11 @@ test('deleting a user removes their sessions', () => {
   assert.equal(userFromToken(t), null);
   assert.equal(db.prepare('SELECT COUNT(*) c FROM sessions WHERE token = ?').get(t).c, 0);
 });
+
+test('which() finds programs without a shell', async () => {
+  const { which } = await import('../src/remote.js');
+  assert.equal(which('sh'), true);
+  assert.equal(which('bestaat-niet-kinoko'), false);
+  assert.equal(which('sh; touch /tmp/kinoko-injectie'), false);
+  assert.equal(which('../bin/sh'), false);
+});
