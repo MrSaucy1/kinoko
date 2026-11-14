@@ -83,13 +83,18 @@ class _OnboardingScreenState extends State<OnboardingScreen> with SingleTickerPr
         if (mounted) setState(() => _stage = _Stage.login);
       });
 
+  final _code = TextEditingController();
+  bool _needCode = false;
+
   Future<void> _signIn() => _run(() async {
         if (_withInvite) {
           // Accept a pasted invite link as well as the bare code.
           final code = _invite.text.trim().split('/').last;
           await api.register(code, _name.text.trim(), _pass.text);
         } else {
-          await api.login(_name.text.trim(), _pass.text);
+          final done = await api.login(_name.text.trim(), _pass.text, code: _code.text.trim());
+          // The account uses two-factor sign-in: show the code field and wait for it.
+          if (!done && mounted) setState(() => _needCode = true);
         }
       });
 
@@ -254,6 +259,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> with SingleTickerPr
         TextField(controller: _name, autofocus: !Device.isTv, autocorrect: false, textInputAction: TextInputAction.next, decoration: const InputDecoration(labelText: 'Naam')),
         const SizedBox(height: 12),
         TextField(controller: _pass, obscureText: true, textInputAction: TextInputAction.go, onSubmitted: (_) => _signIn(), decoration: const InputDecoration(labelText: 'Wachtwoord')),
+        if (_needCode && !_withInvite) ...[
+          const SizedBox(height: 12),
+          TextField(controller: _code, autofocus: true, keyboardType: TextInputType.text, autocorrect: false, textInputAction: TextInputAction.go, onSubmitted: (_) => _signIn(), decoration: const InputDecoration(labelText: 'Code uit je authenticator-app', helperText: 'Of een herstelcode')),
+        ],
         const SizedBox(height: 18),
         KButton(_withInvite ? 'Account aanmaken' : 'Inloggen', primary: true, expand: true, busy: _busy, onTap: _signIn, autofocus: Device.isTv),
         const SizedBox(height: 8),

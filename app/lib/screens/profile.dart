@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../core/api.dart';
 import '../core/theme.dart';
@@ -86,6 +87,7 @@ class ProfileScreen extends StatelessWidget {
             item(Icons.favorite_rounded, 'Mijn lijst', 'Alles wat je hebt bewaard', () => Navigator.push(context, MaterialPageRoute(builder: (_) => const _MyList()))),
             item(Icons.casino_rounded, 'Watch Night', 'Dobbel voor drie films die bij het seizoen passen', () => openWatchNight(context)),
             item(Icons.devices_rounded, 'Apparaten', 'Waar je account is ingelogd; log een apparaat uit', () => Navigator.push(context, MaterialPageRoute(builder: (_) => const _Devices()))),
+            item(Icons.verified_user_rounded, 'Tweestapsverificatie', u['twoFactor'] == true ? 'Staat aan' : 'Extra code bij het inloggen', () => Navigator.push(context, MaterialPageRoute(builder: (_) => const _TwoFactor()))),
             if (u['role'] == 'admin') item(Icons.admin_panel_settings_rounded, 'Beheer', 'Bibliotheken, gebruikers, live tv en instellingen van de server', () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminScreen()))),
             item(Icons.logout_rounded, 'Uitloggen', 'Je blijft verbonden met deze server', () => api.logout()),
             item(Icons.dns_rounded, 'Andere server', 'Uitloggen en een ander serveradres invullen', () => api.logout(forgetServer: true)),
@@ -212,3 +214,112 @@ class _DevicesState extends State<_Devices> {
     );
   }
 }
+
+/// Two-factor sign-in: copy the key into an authenticator app, confirm with a
+/// code, keep the recovery codes.
+class _TwoFactor extends StatefulWidget {
+  const _TwoFactor();
+  @override
+  State<_TwoFactor> createState() => _TwoFactorState();
+}
+
+class _TwoFactorState extends State<_TwoFactor> {
+  final _code = TextEditingController();
+  final _pass = TextEditingController();
+  String? _secret;
+  List<String>? _recovery;
+  bool _busy = false;
+  bool get _on => api.user?['twoFactor'] == true;
+
+  Future<void> _run(Future<void> Function() action) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      await action();
+    } catch (e) {
+      if (mounted) showMessage(context, e);
+    }
+    if (mounted) setState(() => _busy = false);
+  }
+
+  void _copy(String text, String done) {
+    Clipboard.setData(ClipboardData(text: text));
+    showMessage(context, done);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final pad = Device.isTv ? 48.0 : 16.0;
+    const gap = SizedBox(height: 14);
+    final List<Widget> children;
+    if (_recovery != null) {
+      children = [
+        const Text('Tweestapsverificatie staat aan', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+        gap,
+        const Text('Bewaar deze herstelcodes op een veilige plek. Elke code werkt één keer als je je telefoon kwijt bent. Ze worden niet opnieuw getoond.', style: TextStyle(color: K.muted)),
+        gap,
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(color: K.surface, borderRadius: BorderRadius.circular(14), border: Border.all(color: K.line)),
+          child: SelectableText(_recovery!.join('\n'), style: const TextStyle(fontFamily: 'monospace', height: 1.7)),
+        ),
+        gap,
+        KButton('Kopiëren', icon: Icons.copy_rounded, onTap: () => _copy(_recovery!.join('\n'), 'Herstelcodes gekopieerd')),
+        gap,
+        KButton('Ik heb ze bewaard', primary: true, expand: true, autofocus: Device.isTv, onTap: () => Navigator.pop(context)),
+      ];
+    } else if (_on) {
+      children = [
+        const Text('Staat aan: bij het inloggen vraagt Kinoko om een code uit je authenticator-app.', style: TextStyle(color: K.muted)),
+        gap,
+        TextField(controller: _pass, obscureText: true, decoration: const InputDecoration(labelText: 'Wachtwoord')),
+        gap,
+        TextField(controller: _code, autocorrect: false, decoration: const InputDecoration(labelText: 'Code uit de app (of een herstelcode)')),
+        gap,
+        KButton('Uitzetten', expand: true, busy: _busy, onTap: () => _run(() async {
+              await api.post('/api/auth/2fa/disable', {'password': _pass.text, 'code': _code.text.trim()});
+              await api.refreshUser();
+              if (context.mounted) {
+                showMessage(context, 'Tweestapsverificatie uitgezet');
+                Navigator.pop(context);
+              }
+            })),
+      ];
+    } else if (_secret == null) {
+      children = [
+        const Text('Naast je wachtwoord vraagt Kinoko dan om een code uit een authenticator-app (Aegis, Google Authenticator, 1Password…).', style: TextStyle(color: K.muted)),
+        gap,
+        KButton('Instellen', primary: true, expand: true, busy: _busy, autofocus: Device.isTv, onTap: () => _run(() async {
+              final r = await api.post('/api/auth/2fa/setup', const {});
+              setState(() => _secret = r['secret'].toString());
+            })),
+      ];
+    } else {
+      children = [
+        const Text('Voeg in je authenticator-app een account toe met deze sleutel (type: tijdgebaseerd):', style: TextStyle(color: K.muted)),
+        gap,
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(color: K.surface, borderRadius: BorderRadius.circular(14), border: Border.all(color: K.line)),
+          child: SelectableText(_secret!, style: const TextStyle(fontFamily: 'monospace', fontSize: 16, letterSpacing: 1.2)),
+        ),
+        gap,
+        KButton('Sleutel kopiëren', icon: Icons.copy_rounded, onTap: () => _copy(_secret!, 'Sleutel gekopieerd')),
+        gap,
+        TextField(controller: _code, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Vul de code in die de app nu toont')),
+        gap,
+        KButton('Aanzetten', primary: true, expand: true, busy: _busy, onTap: () => _run(() async {
+              final r = await api.post('/api/auth/2fa/enable', {'code': _code.text.trim()});
+              await api.refreshUser();
+              setState(() => _recovery = [for (final c in listOf2(r['recoveryCodes'])) c.toString()]);
+            })),
+      ];
+    }
+    return Scaffold(
+      appBar: AppBar(title: const Text('Tweestapsverificatie', style: TextStyle(fontWeight: FontWeight.w800)), leading: Device.isTv ? const SizedBox.shrink() : null),
+      body: Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 560), child: ListView(padding: EdgeInsets.fromLTRB(pad, 12, pad, 40), children: children))),
+    );
+  }
+}
+
+List<Object?> listOf2(Object? v) => v is List ? v : const [];

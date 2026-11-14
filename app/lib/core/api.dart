@@ -94,6 +94,14 @@ class Session extends ChangeNotifier {
     return info;
   }
 
+  /// Re-reads the account from the server (after a change to it, e.g. two-factor sign-in).
+  Future<void> refreshUser() async {
+    final r = await get('/api/auth/me');
+    user = r['user'] as Json;
+    await _prefs.setString('user', jsonEncode(user));
+    notifyListeners();
+  }
+
   Future<void> _saveLogin(Json r) async {
     token = r['token'] as String;
     user = r['user'] as Json;
@@ -102,9 +110,12 @@ class Session extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> login(String name, String password) async {
-    final r = await post('/api/auth/login', {'name': name, 'password': password, 'device': Device.isTv ? 'Android TV' : 'Android'});
+  /// Returns false when the account uses two-factor sign-in and [code] is still needed.
+  Future<bool> login(String name, String password, {String code = ''}) async {
+    final r = await post('/api/auth/login', {'name': name, 'password': password, 'device': Device.isTv ? 'Android TV' : 'Android', if (code.isNotEmpty) 'code': code});
+    if (r['totpRequired'] == true) return false;
     await _saveLogin(r);
+    return true;
   }
 
   Future<void> register(String code, String name, String password) async {

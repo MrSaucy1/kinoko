@@ -154,6 +154,7 @@ const PAGES = {
   'live-tv': ['Live tv', 'globe', iptvPage],
   'back-ups': ['Back-ups', 'download', backupsPage],
   meldingen: ['Meldingen', 'chat', webhooksPage],
+  logboek: ['Logboek', 'layers', auditPage],
   toegang: ['Externe toegang', 'link', () => page('Externe toegang', 'Kies hoe Kinoko van buiten je huis bereikbaar is. Dit adres wordt gebruikt voor uitnodigingen en serverkoppelingen.', remotePanel())],
 };
 let main;
@@ -184,6 +185,7 @@ async function dashboard() {
       busy && h('div.note', { style: { marginBottom: '18px' } }, h('b', 'Bezig op de achtergrond: '), [t.scan.running && `bibliotheek scannen (${t.scan.phase})`, t.metadata.running && `metadata ${t.metadata.done}/${t.metadata.total}`, t.markers.running && `intro's detecteren ${t.markers.done}/${t.markers.total}`].filter(Boolean).join(' · ')),
       h('div.section', h('h2', 'Server'), h('div.card-box.stack',
         h('label.field', h('span', 'Naam van deze server (zichtbaar voor gekoppelde servers en bij versies)'), h('div.row', name, h('button.btn', { onclick: (e) => act(e.currentTarget, async () => { await api('/api/admin/settings', { method: 'PUT', body: { serverName: name.value } }); toast('Opgeslagen'); state.info.name = name.value; draw(); }) }, 'Opslaan'))),
+        h('label.row', h('input', { type: 'checkbox', checked: d.require2faAdmins, onchange: (e) => act(null, async () => { try { await api('/api/admin/settings', { method: 'PUT', body: { require2faAdmins: e.target.checked } }); toast('Opgeslagen'); } catch (err) { e.target.checked = !e.target.checked; throw err; } }) }), h('span', 'Tweestapsverificatie verplicht voor beheerders')),
         h('label.field', h('span', 'Apparaten automatisch uitloggen na zoveel dagen zonder gebruik'), h('div.row', idle, h('button.btn', { onclick: (e) => act(e.currentTarget, async () => { const n = Number(idle.value); if (!Number.isInteger(n) || n < 1 || n > 3650) throw new Error('Vul een aantal dagen in tussen 1 en 3650.'); await api('/api/admin/settings', { method: 'PUT', body: { sessionIdleDays: n } }); toast('Opgeslagen'); draw(); }) }, 'Opslaan'))),
         h('div.row.wrap', h('button.btn', { onclick: () => act(null, async () => { await api('/api/admin/scan', { method: 'POST' }); toast('Scan gestart'); draw(); }) }, icon('refresh'), 'Bibliotheken scannen'),
           h('button.btn', { onclick: async (e) => { if (await confirmDialog('Kinoko bijwerken?', 'De server haalt de nieuwste versie van GitHub en herstart. Lopende streams worden kort onderbroken.', 'Bijwerken')) act(e.currentTarget, async () => { await api('/api/admin/update', { method: 'POST' }); toast('Bijgewerkt — de server herstart'); }); } }, icon('download'), 'Kinoko bijwerken')))),
@@ -208,6 +210,47 @@ function markersSection() {
       h('div.row', h('button.btn', { onclick: (e) => act(e.currentTarget, async () => { await api('/api/admin/markers/redetect', { method: 'POST' }); toast('Detectie opnieuw gestart'); }) }, icon('refresh'), 'Opnieuw detecteren'))));
   })();
   return box;
+}
+
+// Which libraries one user may see.
+function accessDialog(u, libraries, after) {
+  const all = h('input', { type: 'checkbox', checked: u.allLibraries });
+  const peers = h('input', { type: 'checkbox', checked: u.allowPeers });
+  const boxes = libraries.map((l) => [l.id, h('input', { type: 'checkbox', checked: u.allLibraries || u.libraries.includes(l.id) })]);
+  const list = h('div.stack', { style: { gap: '8px', paddingLeft: '4px' } }, libraries.map((l, i) => h('label.row', boxes[i][1], h('span', `${l.name} (${l.type === 'movies' ? 'films' : l.type === 'shows' ? 'series' : 'muziek'})`))));
+  const sync = () => { for (const [, b] of boxes) b.disabled = all.checked; list.style.opacity = all.checked ? '.5' : '1'; };
+  all.onchange = sync; sync();
+  const m = openModal(h('form.stack', { onsubmit: (e) => { e.preventDefault(); act(e.submitter, async () => {
+    await api(`/api/admin/users/${u.id}`, { method: 'PUT', body: { allLibraries: all.checked, allowPeers: peers.checked, libraries: boxes.filter(([, b]) => b.checked).map(([id]) => id) } });
+    toast('Opgeslagen'); m.close(); after();
+  }); } }, h('h2', `Toegang van ${u.name}`), h('p.muted', 'Wat niet is aangevinkt bestaat voor deze gebruiker niet: het komt niet voor in home, zoeken, collecties of samen kijken.'),
+    h('label.row', all, h('b', 'Alle bibliotheken, ook nieuwe')), list, h('label.row', peers, h('span', 'Titels van gekoppelde servers')), h('button.btn.primary', 'Opslaan')), { small: true });
+}
+
+async function auditPage() {
+  const lead = 'Wie wat heeft gedaan op deze server: inlogpogingen, wijzigingen aan gebruikers en instellingen, koppelingen en updates.';
+  page('Logboek', lead);
+  let action = '', q = '', timer;
+  const rows = h('div.list'), more = h('button.btn.hide', 'Meer laden');
+  const search = h('input.input', { type: 'search', placeholder: 'Zoek op naam, IP-adres of omschrijving', style: { maxWidth: '340px' }, oninput: () => { clearTimeout(timer); timer = setTimeout(() => { q = search.value.trim(); load(true); }, 300); } });
+  const filter = h('select.input', { style: { width: 'auto' }, onchange: () => { action = filter.value; load(true); } }, h('option', { value: '' }, 'Alles'));
+  const days = h('input.input', { type: 'number', min: 1, max: 3650, style: { maxWidth: '110px' } });
+  let last = 0, filled = false;
+  async function load(reset) {
+    if (reset) { last = 0; rows.replaceChildren(); }
+    const d = await api(`/api/admin/audit?action=${encodeURIComponent(action)}&q=${encodeURIComponent(q)}${last ? `&before=${last}` : ''}`);
+    if (!filled) { filled = true; filter.append(...d.actions.map((a) => h('option', { value: a.id }, a.label))); days.value = d.days; }
+    rows.append(...d.entries.map((e) => h('div.list-item', h('div.grow', h('b', e.label, e.user && h('span.muted', { style: { fontWeight: 400 } }, ` · ${e.user}`)), h('small', [fmtDate(e.at), e.ip, e.detail].filter(Boolean).join(' · '))),
+      e.action === 'login.fail' && h('span.badge.warn', 'mislukt'))));
+    if (!rows.children.length) rows.append(h('p.muted', 'Niets gevonden.'));
+    last = d.entries.length ? d.entries[d.entries.length - 1].id : last;
+    more.classList.toggle('hide', d.entries.length < 100);
+  }
+  more.onclick = () => act(more, () => load(false));
+  main.replaceChildren(h('h1', 'Logboek'), h('p.lead', lead), h('div.row.wrap', { style: { marginBottom: '16px' } }, search, filter),
+    h('div.section', rows, h('div.row', { style: { marginTop: '12px' } }, more)),
+    h('div.section', h('h2', 'Bewaartermijn'), h('div.card-box', h('label.field', h('span', 'Regels ouder dan zoveel dagen worden gewist'), h('div.row', days, h('button.btn', { onclick: (e) => act(e.currentTarget, async () => { await api('/api/admin/audit', { method: 'PUT', body: { days: Number(days.value) } }); toast('Opgeslagen'); }) }, 'Opslaan'))))));
+  load(true).catch((e) => toast(e.message, 'bad'));
 }
 
 async function backupsPage() {
@@ -269,7 +312,9 @@ async function usersPage() {
     const d = await api('/api/admin/users');
     const inviteUrl = (c) => `${location.origin}/join/${c}`;
     main.replaceChildren(h('h1', 'Gebruikers'), h('p.lead', 'Iedereen heeft een eigen account met eigen voortgang, lijst en aanbevelingen.'),
-      h('div.section', h('div.list', d.users.map((u) => h('div.list-item', h(`div.avatar.${u.avatar}`, u.name[0]), h('div.grow', h('b', u.name), h('small', u.role === 'admin' ? 'Beheerder' : 'Kijker')),
+      h('div.section', h('div.list', d.users.map((u) => h('div.list-item', h(`div.avatar.${u.avatar}`, u.name[0]), h('div.grow', h('b', u.name, u.twoFactor && h('span.badge', { style: { marginLeft: '8px' } }, '2FA')), h('small', `${u.role === 'admin' ? 'Beheerder' : 'Kijker'}${u.role !== 'admin' && !u.allLibraries ? ` · ${u.libraries.length} van ${d.libraries.length} bibliotheken` : ''}`)),
+        u.role !== 'admin' && h('button.btn.sm', { onclick: () => accessDialog(u, d.libraries, draw) }, 'Toegang'),
+        u.twoFactor && u.id !== state.user.id && h('button.btn.sm', { title: 'Als iemand zijn telefoon kwijt is', onclick: async () => { if (await confirmDialog('Tweestapsverificatie resetten?', `${u.name} logt daarna weer in met alleen het wachtwoord en kan het opnieuw instellen.`, 'Resetten')) { await api(`/api/admin/users/${u.id}`, { method: 'PUT', body: { reset2fa: true } }); toast('Gereset'); draw(); } } }, '2FA resetten'),
         h('select.input', { title: 'Maximale streamkwaliteit', 'aria-label': `Maximale kwaliteit voor ${u.name}`, style: { width: 'auto', height: '34px' }, onchange: (e) => act(null, async () => { await api(`/api/admin/users/${u.id}`, { method: 'PUT', body: { maxQuality: e.target.value } }); toast('Opgeslagen'); }) },
           [['', 'Geen limiet'], ['1080', 'Max. 1080p · 8 Mbps'], ['720', 'Max. 720p · 4 Mbps'], ['480', 'Max. 480p · 1,5 Mbps'], ['360', 'Max. 360p · 0,7 Mbps']].map(([v, l]) => h('option', { value: v, selected: (u.maxQuality || '') === v }, l))),
         u.id !== state.user.id && h('button.btn.sm.danger', { onclick: async () => { if (await confirmDialog('Gebruiker verwijderen?', `${u.name} kan niet meer inloggen en de kijkgeschiedenis wordt gewist.`, 'Verwijderen')) { await api(`/api/admin/users/${u.id}`, { method: 'DELETE' }); draw(); } } }, icon('trash')))))),

@@ -6,13 +6,16 @@ import { adminView, setupView } from './admin.js';
 function loginView(_, query) {
   const next = query.get('next') || '/';
   const name = h('input.input', { autocomplete: 'username', required: true, autofocus: true }), pass = h('input.input', { type: 'password', autocomplete: 'current-password', required: true });
+  const code = h('input.input', { inputMode: 'numeric', autocomplete: 'one-time-code', placeholder: '123456', maxLength: 12 });
+  const codeField = h('label.field.hide', h('span', 'Code uit je authenticator-app'), code, h('small', 'Geen toegang tot de app? Vul een herstelcode in.'));
   setView(h('div.auth', h('form.auth-card', { onsubmit: (e) => { e.preventDefault(); act(e.submitter, async () => {
-    const r = await api('/api/auth/login', { method: 'POST', body: { name: name.value, password: pass.value, device: 'Web' } });
+    const r = await api('/api/auth/login', { method: 'POST', body: { name: name.value, password: pass.value, device: 'Web', ...(code.value.trim() && { code: code.value.trim() }) } });
+    if (r.totpRequired) { codeField.classList.remove('hide'); code.required = true; code.focus(); return; }
     setToken(r.token); state.user = r.user; connectEvents();
     if (r.user.role === 'admin') { try { state.onboarded = (await api('/api/admin/settings')).onboarded; } catch { /* wizard check is best-effort */ } }
     go(next.startsWith('/') && !next.startsWith('//') ? next : '/');
   }); } }, h('div.logo', h('span', 'Kinoko')), h('h1', 'Welkom terug'), h('p', `Log in op ${state.info.name}.`),
-    h('div.stack', h('label.field', h('span', 'Naam'), name), h('label.field', h('span', 'Wachtwoord'), pass), h('button.btn.primary.lg', { style: { marginTop: '6px' } }, 'Inloggen')))));
+    h('div.stack', h('label.field', h('span', 'Naam'), name), h('label.field', h('span', 'Wachtwoord'), pass), codeField, h('button.btn.primary.lg', { style: { marginTop: '6px' } }, 'Inloggen')))));
 }
 
 async function joinView({ code }) {

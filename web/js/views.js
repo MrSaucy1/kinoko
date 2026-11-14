@@ -1,5 +1,5 @@
 // Browsing: shell, home, grids, title detail, Watch Night, Live TV.
-import { api, h, icon, state, go, setView, openModal, mountLayer, toast, act, setToken, fmtRuntime, fmtBitrate, fmtSize, fmtTime, fmtDate, copyText } from './core.js';
+import { api, h, icon, state, go, setView, openModal, mountLayer, toast, act, setToken, fmtRuntime, fmtBitrate, fmtSize, fmtTime, fmtDate, copyText, qrSvg } from './core.js';
 import { startPlayback, playChannel, playExtra } from './player.js';
 
 // ---------------------------------------------------------------------------
@@ -37,6 +37,7 @@ export function shell(active, ...content) {
       state.user.role === 'admin' && h('a', { href: '/beheer' }, icon('gear'), 'Beheer'),
       h('button', { onclick: passwordDialog }, icon('tag'), 'Wachtwoord wijzigen'),
       h('button', { onclick: devicesDialog }, icon('tv'), 'Apparaten'),
+      h('button', { onclick: twoFactorDialog }, icon('check'), 'Tweestapsverificatie'),
       h('button', { onclick: async () => { try { await api('/api/auth/logout', { method: 'POST' }); } catch { /* token already invalid */ } setToken(''); state.user = null; go('/login'); } }, icon('back'), 'Uitloggen'));
     menuWrap.append(menu);
     setTimeout(() => document.addEventListener('click', closeMenu));
@@ -50,6 +51,30 @@ export function shell(active, ...content) {
   window.addEventListener('scroll', onScroll, { passive: true }); onScroll();
   setView(bar, h('main.view', content), tabs);
   return () => { window.removeEventListener('scroll', onScroll); closeMenu(); };
+}
+
+// Two-factor sign-in: scan the QR code, confirm with a code, keep the recovery codes.
+function twoFactorDialog() {
+  const body = h('div.stack');
+  const m = openModal(body, { small: true });
+  const done = (codes) => body.replaceChildren(h('h2', 'Tweestapsverificatie staat aan'), h('p.muted', 'Bewaar deze herstelcodes op een veilige plek. Elke code werkt één keer als je je telefoon kwijt bent. Ze worden niet opnieuw getoond.'),
+    h('div.codebox', { style: { whiteSpace: 'pre-wrap', fontFamily: 'ui-monospace, monospace', lineHeight: '1.8' } }, h('span.grow', codes.join('   ')), h('button.btn.sm', { onclick: () => copyText(codes.join('\n'), 'Herstelcodes gekopieerd') }, icon('copy'))),
+    h('button.btn.primary', { onclick: () => m.close() }, 'Ik heb ze bewaard'));
+  if (state.user.twoFactor) {
+    const pass = h('input.input', { type: 'password', autocomplete: 'current-password' }), code = h('input.input', { inputMode: 'numeric', autocomplete: 'one-time-code', placeholder: '123456' });
+    body.replaceChildren(h('h2', 'Tweestapsverificatie'), h('p.muted', 'Staat aan: bij het inloggen vraagt Kinoko om een code uit je authenticator-app.'),
+      h('form.stack', { onsubmit: (e) => { e.preventDefault(); act(e.submitter, async () => { await api('/api/auth/2fa/disable', { method: 'POST', body: { password: pass.value, code: code.value } }); state.user.twoFactor = false; toast('Tweestapsverificatie uitgezet'); m.close(); }); } },
+        h('label.field', h('span', 'Wachtwoord'), pass), h('label.field', h('span', 'Code uit de app (of een herstelcode)'), code), h('button.btn.danger', 'Uitzetten')));
+    return;
+  }
+  body.replaceChildren(h('h2', 'Tweestapsverificatie'), h('p.muted', 'Naast je wachtwoord vraagt Kinoko dan om een code uit een authenticator-app (Aegis, Google Authenticator, 1Password…).'),
+    h('button.btn.primary', { onclick: (e) => act(e.currentTarget, async () => {
+      const s = await api('/api/auth/2fa/setup', { method: 'POST' });
+      const code = h('input.input', { inputMode: 'numeric', autocomplete: 'one-time-code', placeholder: '123456', autofocus: true });
+      body.replaceChildren(h('h2', 'Scan de code'), h('div.row.wrap', { style: { gap: '18px' } }, qrSvg(s.url), h('div.grow.stack', { style: { gap: '8px' } }, h('p.muted', 'Scan dit met je authenticator-app, of typ de sleutel over:'), h('div.codebox', h('span.grow', { style: { wordBreak: 'break-all' } }, s.secret), h('button.btn.sm', { onclick: () => copyText(s.secret) }, icon('copy'))))),
+        h('form.stack', { onsubmit: (ev) => { ev.preventDefault(); act(ev.submitter, async () => { const r = await api('/api/auth/2fa/enable', { method: 'POST', body: { code: code.value } }); state.user.twoFactor = true; state.user.mustSetup2fa = false; done(r.recoveryCodes); }); } },
+          h('label.field', h('span', 'Vul de code in die de app nu toont'), code), h('button.btn.primary', 'Aanzetten')));
+    }) }, 'Instellen'));
 }
 
 // Every place this account is signed in, with a way to sign each one out.
