@@ -85,6 +85,7 @@ class ProfileScreen extends StatelessWidget {
             item(Icons.groups_rounded, 'Samen kijken', 'Doe mee met een code van iemand anders', () => joinRoomDialog(context), autofocus: Device.isTv),
             item(Icons.favorite_rounded, 'Mijn lijst', 'Alles wat je hebt bewaard', () => Navigator.push(context, MaterialPageRoute(builder: (_) => const _MyList()))),
             item(Icons.casino_rounded, 'Watch Night', 'Dobbel voor drie films die bij het seizoen passen', () => openWatchNight(context)),
+            item(Icons.devices_rounded, 'Apparaten', 'Waar je account is ingelogd; log een apparaat uit', () => Navigator.push(context, MaterialPageRoute(builder: (_) => const _Devices()))),
             if (u['role'] == 'admin') item(Icons.admin_panel_settings_rounded, 'Beheer', 'Bibliotheken, gebruikers, live tv en instellingen van de server', () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminScreen()))),
             item(Icons.logout_rounded, 'Uitloggen', 'Je blijft verbonden met deze server', () => api.logout()),
             item(Icons.dns_rounded, 'Andere server', 'Uitloggen en een ander serveradres invullen', () => api.logout(forgetServer: true)),
@@ -115,6 +116,97 @@ class _MyListState extends State<_MyList> {
         builder: (context, d) {
           final row = listOf(d['rows']).where((r) => r['id'] == 'mylist').firstOrNull;
           return TitleGrid(listOf(row?['items']), onChanged: () => setState(() => _future = api.get('/api/home')));
+        },
+      ),
+    );
+  }
+}
+
+/// Every place this account is signed in, with a way to sign each one out.
+class _Devices extends StatefulWidget {
+  const _Devices();
+  @override
+  State<_Devices> createState() => _DevicesState();
+}
+
+class _DevicesState extends State<_Devices> {
+  late Future<Json> _future = api.get('/api/auth/sessions');
+  bool _busy = false;
+
+  static String _when(dynamic ts) {
+    final d = DateTime.fromMillisecondsSinceEpoch(((ts as num?) ?? 0).toInt() * 1000);
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${d.day}-${d.month}-${d.year} ${two(d.hour)}:${two(d.minute)}';
+  }
+
+  Future<void> _run(Future<Json> Function() action, String done) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      await action();
+      if (mounted) showMessage(context, done);
+    } catch (e) {
+      if (mounted) showMessage(context, e);
+    }
+    if (mounted) {
+      setState(() {
+        _busy = false;
+        _future = api.get('/api/auth/sessions');
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final pad = Device.isTv ? 48.0 : 16.0;
+    return Scaffold(
+      appBar: AppBar(title: const Text('Apparaten', style: TextStyle(fontWeight: FontWeight.w800)), leading: Device.isTv ? const SizedBox.shrink() : null),
+      body: Loader<Json>(
+        future: _future,
+        onRetry: () => setState(() => _future = api.get('/api/auth/sessions')),
+        builder: (context, d) {
+          final sessions = listOf(d['sessions']);
+          return Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 640),
+              child: ListView(padding: EdgeInsets.fromLTRB(pad, 12, pad, 40), children: [
+                const Text('Hier is je account ingelogd. Herken je er een niet? Log het uit en wijzig je wachtwoord.', style: TextStyle(color: K.muted)),
+                const SizedBox(height: 16),
+                for (final s in sessions)
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 10),
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(color: K.surface, borderRadius: BorderRadius.circular(14), border: Border.all(color: K.line)),
+                    child: Row(children: [
+                      Expanded(
+                        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          Row(children: [
+                            Flexible(child: Text((s['device'] ?? '').toString().isEmpty ? 'Onbekend apparaat' : s['device'].toString(), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700))),
+                            if (s['current'] == true) ...[const SizedBox(width: 8), const Badge2('Dit apparaat')],
+                          ]),
+                          const SizedBox(height: 2),
+                          Text('Laatst gebruikt ${_when(s['last_seen'])}', style: const TextStyle(color: K.muted, fontSize: 13)),
+                        ]),
+                      ),
+                      if (s['current'] != true) ...[
+                        const SizedBox(width: 10),
+                        KButton('Uitloggen', onTap: _busy ? null : () => _run(() => api.delete('/api/auth/sessions/${s['id']}'), 'Apparaat uitgelogd')),
+                      ],
+                    ]),
+                  ),
+                const SizedBox(height: 8),
+                KButton(
+                  'Overal anders uitloggen',
+                  icon: Icons.logout_rounded,
+                  expand: true,
+                  autofocus: Device.isTv,
+                  onTap: _busy || sessions.length < 2 ? null : () => _run(() => api.post('/api/auth/sessions/revoke-others', const {}), 'Alle andere apparaten zijn uitgelogd'),
+                ),
+                const SizedBox(height: 14),
+                Text('Een apparaat dat ${d['idleDays'] ?? 90} dagen niet is gebruikt, wordt vanzelf uitgelogd.', style: const TextStyle(color: K.faint, fontSize: 13)),
+              ]),
+            ),
+          );
         },
       ),
     );

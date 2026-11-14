@@ -173,6 +173,7 @@ async function dashboard() {
   async function draw() {
     let d; try { d = await api('/api/admin/settings'); } catch { return; }
     const name = h('input.input', { value: d.serverName, style: { maxWidth: '280px' } });
+    const idle = h('input.input', { type: 'number', min: 1, max: 3650, value: d.sessionIdleDays, style: { maxWidth: '120px' } });
     const t = d.tasks;
     const busy = t.scan.running || t.metadata.running || t.markers.running;
     main.replaceChildren(h('h1', d.serverName), h('p.lead', `Kinoko ${d.version} · ${d.publicUrl || d.currentUrl}`),
@@ -181,6 +182,7 @@ async function dashboard() {
       busy && h('div.note', { style: { marginBottom: '18px' } }, h('b', 'Bezig op de achtergrond: '), [t.scan.running && `bibliotheek scannen (${t.scan.phase})`, t.metadata.running && `metadata ${t.metadata.done}/${t.metadata.total}`, t.markers.running && `intro's detecteren ${t.markers.done}/${t.markers.total}`].filter(Boolean).join(' · ')),
       h('div.section', h('h2', 'Server'), h('div.card-box.stack',
         h('label.field', h('span', 'Naam van deze server (zichtbaar voor gekoppelde servers en bij versies)'), h('div.row', name, h('button.btn', { onclick: (e) => act(e.currentTarget, async () => { await api('/api/admin/settings', { method: 'PUT', body: { serverName: name.value } }); toast('Opgeslagen'); state.info.name = name.value; draw(); }) }, 'Opslaan'))),
+        h('label.field', h('span', 'Apparaten automatisch uitloggen na zoveel dagen zonder gebruik'), h('div.row', idle, h('button.btn', { onclick: (e) => act(e.currentTarget, async () => { const n = Number(idle.value); if (!Number.isInteger(n) || n < 1 || n > 3650) throw new Error('Vul een aantal dagen in tussen 1 en 3650.'); await api('/api/admin/settings', { method: 'PUT', body: { sessionIdleDays: n } }); toast('Opgeslagen'); draw(); }) }, 'Opslaan'))),
         h('div.row.wrap', h('button.btn', { onclick: () => act(null, async () => { await api('/api/admin/scan', { method: 'POST' }); toast('Scan gestart'); draw(); }) }, icon('refresh'), 'Bibliotheken scannen'),
           h('button.btn', { onclick: async (e) => { if (await confirmDialog('Kinoko bijwerken?', 'De server haalt de nieuwste versie van GitHub en herstart. Lopende streams worden kort onderbroken.', 'Bijwerken')) act(e.currentTarget, async () => { await api('/api/admin/update', { method: 'POST' }); toast('Bijgewerkt — de server herstart'); }); } }, icon('download'), 'Kinoko bijwerken')))),
       h('div.section', h('h2', 'Apps'), h('div.card-box.row.wrap', { style: { gap: '22px' } }, qrSvg(d.publicUrl || d.currentUrl),

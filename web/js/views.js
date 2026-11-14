@@ -1,5 +1,5 @@
 // Browsing: shell, home, grids, title detail, Watch Night, Live TV.
-import { api, h, icon, state, go, setView, openModal, mountLayer, toast, act, setToken, fmtRuntime, fmtBitrate, fmtSize, fmtTime, copyText } from './core.js';
+import { api, h, icon, state, go, setView, openModal, mountLayer, toast, act, setToken, fmtRuntime, fmtBitrate, fmtSize, fmtTime, fmtDate, copyText } from './core.js';
 import { startPlayback, playChannel } from './player.js';
 
 // ---------------------------------------------------------------------------
@@ -36,6 +36,7 @@ export function shell(active, ...content) {
       h('hr'),
       state.user.role === 'admin' && h('a', { href: '/beheer' }, icon('gear'), 'Beheer'),
       h('button', { onclick: passwordDialog }, icon('tag'), 'Wachtwoord wijzigen'),
+      h('button', { onclick: devicesDialog }, icon('tv'), 'Apparaten'),
       h('button', { onclick: async () => { try { await api('/api/auth/logout', { method: 'POST' }); } catch { /* token already invalid */ } setToken(''); state.user = null; go('/login'); } }, icon('back'), 'Uitloggen'));
     menuWrap.append(menu);
     setTimeout(() => document.addEventListener('click', closeMenu));
@@ -49,6 +50,24 @@ export function shell(active, ...content) {
   window.addEventListener('scroll', onScroll, { passive: true }); onScroll();
   setView(bar, h('main.view', content), tabs);
   return () => { window.removeEventListener('scroll', onScroll); closeMenu(); };
+}
+
+// Every place this account is signed in, with a way to sign each one out.
+function devicesDialog() {
+  const list = h('div.stack', { style: { gap: '8px' } }), others = h('button.btn', 'Overal anders uitloggen'), note = h('p.muted', { style: { fontSize: '13px' } });
+  async function draw() {
+    let d; try { d = await api('/api/auth/sessions'); } catch (e) { list.replaceChildren(h('p.muted', e.message)); return; }
+    note.textContent = `Een apparaat dat ${d.idleDays} dagen niet is gebruikt, wordt vanzelf uitgelogd.`;
+    others.disabled = d.sessions.length < 2;
+    list.replaceChildren(...d.sessions.map((s) => h('div.device',
+      h('div.grow', h('b', s.device || 'Onbekend apparaat'), s.current && h('span.badge', 'Dit apparaat'),
+        h('div.faint', `Laatst gebruikt ${fmtDate(s.last_seen)} · ingelogd ${fmtDate(s.created_at)}`)),
+      !s.current && h('button.btn.sm', { onclick: (e) => act(e.currentTarget, async () => { await api(`/api/auth/sessions/${s.id}`, { method: 'DELETE' }); toast('Apparaat uitgelogd'); await draw(); }) }, 'Uitloggen'))));
+  }
+  // draw() runs after act() so the button stays disabled when nothing else is signed in.
+  others.onclick = async () => { await act(others, async () => { await api('/api/auth/sessions/revoke-others', { method: 'POST' }); toast('Alle andere apparaten zijn uitgelogd'); }); draw(); };
+  openModal(h('div.stack', h('h2', 'Apparaten'), h('p.muted', 'Hier is je account ingelogd. Herken je er een niet? Log het uit en wijzig je wachtwoord.'), list, note, h('div.row', others)), { small: true });
+  draw();
 }
 
 function passwordDialog() {
