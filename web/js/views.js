@@ -1,6 +1,6 @@
 // Browsing: shell, home, grids, title detail, Watch Night, Live TV.
 import { api, h, icon, state, go, setView, openModal, mountLayer, toast, act, setToken, fmtRuntime, fmtBitrate, fmtSize, fmtTime, fmtDate, copyText } from './core.js';
-import { startPlayback, playChannel } from './player.js';
+import { startPlayback, playChannel, playExtra } from './player.js';
 
 // ---------------------------------------------------------------------------
 // Shell
@@ -302,6 +302,7 @@ export async function openDetail(id) {
   });
   const download = (fileId) => act(null, async () => {
     const p = await api('/api/play', { method: 'POST', body: { fileId, quality: 'original' } });
+    if (!p.download) throw new Error('Het origineel downloaden is voor jouw account uitgezet door de beheerder.');
     const a = h('a', { href: p.download, download: '' }); document.body.append(a); a.click(); a.remove(); toast('Download gestart');
   });
 
@@ -347,6 +348,7 @@ export async function openDetail(id) {
   }
 
   if (d.cast.length) body.append(h('div.d-section', h('h3', 'Cast'), h('div.cast', d.cast.slice(0, 16).map((c) => h('div', h('div.ph', c.photo ? h('img', { src: c.photo, alt: '', loading: 'lazy' }) : c.name[0]), h('b', c.name), c.role && h('small', c.role))))));
+  if (d.extras && d.extras.length) body.append(h('div.d-section', h('h3', "Extra's"), h('div.extras', d.extras.map((x) => h('button.extra', { onclick: () => playExtra(x) }, icon('play'), h('span.grow', h('b', x.name), h('small', x.label)), x.duration ? h('small', fmtTime(x.duration)) : null)))));
   if (d.similar.length) body.append(h('div.d-section', h('h3', 'Meer zoals dit'), h('div.d-similar', d.similar.map((c) => { const t = tile(c); t.addEventListener('click', () => m.close(), { capture: true }); return t; }))));
 }
 

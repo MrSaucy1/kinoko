@@ -8,7 +8,7 @@ function loginView(_, query) {
   const name = h('input.input', { autocomplete: 'username', required: true, autofocus: true }), pass = h('input.input', { type: 'password', autocomplete: 'current-password', required: true });
   setView(h('div.auth', h('form.auth-card', { onsubmit: (e) => { e.preventDefault(); act(e.submitter, async () => {
     const r = await api('/api/auth/login', { method: 'POST', body: { name: name.value, password: pass.value, device: 'Web' } });
-    setToken(r.token); state.user = r.user;
+    setToken(r.token); state.user = r.user; connectEvents();
     if (r.user.role === 'admin') { try { state.onboarded = (await api('/api/admin/settings')).onboarded; } catch { /* wizard check is best-effort */ } }
     go(next.startsWith('/') && !next.startsWith('//') ? next : '/');
   }); } }, h('div.logo', h('span', 'Kinoko')), h('h1', 'Welkom terug'), h('p', `Log in op ${state.info.name}.`),
@@ -22,7 +22,7 @@ async function joinView({ code }) {
   const name = h('input.input', { autocomplete: 'username', required: true, minLength: 2, autofocus: true }), pass = h('input.input', { type: 'password', autocomplete: 'new-password', required: true, minLength: 6 });
   setView(h('div.auth', h('form.auth-card', { onsubmit: (e) => { e.preventDefault(); act(e.submitter, async () => {
     const r = await api('/api/auth/register', { method: 'POST', body: { code, name: name.value, password: pass.value, device: 'Web' } });
-    setToken(r.token); state.user = r.user; toast(`Welkom, ${r.user.name}!`); go('/');
+    setToken(r.token); state.user = r.user; connectEvents(); toast(`Welkom, ${r.user.name}!`); go('/');
   }); } }, h('div.logo', h('span', 'Kinoko')), h('h1', `Je bent uitgenodigd voor ${inv.server}`), h('p', 'Kies een naam en wachtwoord om te beginnen met kijken.'),
     h('div.stack', h('label.field', h('span', 'Naam'), name), h('label.field', h('span', 'Wachtwoord'), pass, h('small', 'Minstens 6 tekens.')), h('button.btn.primary.lg', { style: { marginTop: '6px' } }, 'Account aanmaken')))));
 }
@@ -32,6 +32,31 @@ function linkInfoView() {
   setView(h('div.auth', h('div.auth-card', h('div.logo', h('span', 'Kinoko')), h('h1', 'Dit is een koppellink'), h('p', `Hiermee koppel je een andere Kinoko-server aan ${state.info.name}, zodat jullie elkaars bibliotheken kunnen bekijken.`),
     h('div.steps-list', h('div', 'Open het beheer van ', h('b', 'je eigen'), ' Kinoko-server.'), h('div', 'Ga naar ', h('b', 'Gekoppelde servers'), '.'), h('div', 'Plak deze link bij "Koppellink ontvangen?".')),
     h('div.codebox', { style: { marginTop: '18px' } }, h('span.grow', location.href), h('button.btn.sm', { onclick: () => import('./core.js').then((c) => c.copyText(location.href, 'Link gekopieerd')) }, icon('copy'))))));
+}
+
+// Live messages from the server for this account (e.g. "continue here?").
+let events = null, eventsFor = '';
+export function connectEvents() {
+  if (!state.token || (events && eventsFor === state.token && events.readyState <= 1)) return;
+  if (events) { events.onclose = null; events.close(); }
+  eventsFor = state.token;
+  const ws = events = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/events/ws?token=${encodeURIComponent(state.token)}&device=Web`);
+  const beat = setInterval(() => { if (ws.readyState === 1) ws.send('ping'); }, 40_000);
+  ws.onmessage = (ev) => {
+    let m; try { m = JSON.parse(ev.data); } catch { return; }
+    window.dispatchEvent(new CustomEvent('kinoko:event', { detail: m }));
+    if (m.t === 'resume' && !document.querySelector('.player')) resumeOffer(m);
+  };
+  ws.onclose = () => { clearInterval(beat); if (events === ws) { events = null; setTimeout(() => { if (state.token && state.user) connectEvents(); }, 15_000); } };
+}
+function resumeOffer(m) {
+  for (const old of document.querySelectorAll('.offer')) old.remove();
+  const where = m.episodeId ? ` · S${m.season} A${m.episode}` : '';
+  const el = h('div.offer', h('div.grow', h('small', 'Gepauzeerd op een ander apparaat'), h('b', `${m.title}${where}`)),
+    h('button.btn.primary.sm', { onclick: async () => { el.remove(); (await import('./player.js')).startPlayback({ titleId: m.titleId, episodeId: m.episodeId || undefined, resume: m.position }); } }, icon('play'), 'Verder kijken'),
+    h('button.icon-btn', { 'aria-label': 'Sluiten', onclick: () => el.remove() }, icon('x')));
+  document.body.append(el);
+  setTimeout(() => el.remove(), 30_000);
 }
 
 const guard = (fn) => (params, query) => {
@@ -70,4 +95,5 @@ route('/beheer/:section', guard((p) => adminView(p)));
   } catch { setView(h('div.empty', h('h2', 'Server niet bereikbaar'), h('p', 'Kinoko reageert niet. Probeer het zo opnieuw.'), h('button.btn', { onclick: () => location.reload() }, 'Opnieuw proberen'))); return; }
   document.title = state.info.name === 'Kinoko' ? 'Kinoko' : `${state.info.name} · Kinoko`;
   render();
+  connectEvents();
 })();

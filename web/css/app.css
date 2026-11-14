@@ -501,3 +501,13 @@ button.chip:hover { color: var(--text); border-color: var(--line-strong); }
 .device { display: flex; align-items: center; gap: 12px; padding: 12px 14px; background: var(--surface-2, var(--surface)); border: 1px solid var(--line); border-radius: 12px; }
 .device b { margin-right: 8px; }
 .device .faint { font-size: 12.5px; margin-top: 2px; }
+
+/* Extras on a title page */
+.extras { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+.extra { display: flex; align-items: center; gap: 12px; padding: 12px 14px; text-align: left; background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px; color: var(--text); transition: .15s; }
+.extra:hover { background: var(--surface-3); border-color: var(--line-strong); }
+.extra b { display: block; } .extra small { color: var(--muted); font-size: 12.5px; }
+
+/* "Continue on this device?" */
+.offer { position: fixed; z-index: 300; left: 50%; bottom: 26px; transform: translateX(-50%); width: min(520px, calc(100% - 24px)); display: flex; align-items: center; gap: 12px; padding: 12px 12px 12px 18px; background: var(--surface-2); border: 1px solid var(--line-strong); border-radius: 16px; box-shadow: 0 20px 60px -10px #000; }
+.offer small { display: block; color: var(--muted); font-size: 12.5px; }

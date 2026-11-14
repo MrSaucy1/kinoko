@@ -152,6 +152,8 @@ const PAGES = {
   gebruikers: ['Gebruikers', 'users', usersPage],
   servers: ['Gekoppelde servers', 'server', peersPage],
   'live-tv': ['Live tv', 'globe', iptvPage],
+  'back-ups': ['Back-ups', 'download', backupsPage],
+  meldingen: ['Meldingen', 'chat', webhooksPage],
   toegang: ['Externe toegang', 'link', () => page('Externe toegang', 'Kies hoe Kinoko van buiten je huis bereikbaar is. Dit adres wordt gebruikt voor uitnodigingen en serverkoppelingen.', remotePanel())],
 };
 let main;
@@ -208,6 +210,59 @@ function markersSection() {
   return box;
 }
 
+async function backupsPage() {
+  const lead = 'Elke dag maakt Kinoko een kopie van de database (accounts, voortgang, instellingen). Je mediabestanden zitten er niet in.';
+  page('Back-ups', lead);
+  async function draw() {
+    const d = await api('/api/admin/backups');
+    const keep = h('input.input', { type: 'number', min: 1, max: 365, value: d.keep, style: { maxWidth: '110px' } });
+    const download = (name) => act(null, async () => {
+      // The download needs the session header, so it is fetched and handed to the browser as a file.
+      const r = await fetch(`/api/admin/backups/${name}`, { headers: { Authorization: `Bearer ${state.token}` } });
+      if (!r.ok) throw new Error('Downloaden is mislukt.');
+      const a = h('a', { href: URL.createObjectURL(await r.blob()), download: name }); document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    });
+    main.replaceChildren(h('h1', 'Back-ups'), h('p.lead', lead),
+      h('div.section', h('div.card-box.stack',
+        h('label.row', h('input', { type: 'checkbox', checked: d.daily, onchange: (e) => act(null, async () => { await api('/api/admin/backups', { method: 'PUT', body: { daily: e.target.checked } }); toast('Opgeslagen'); }) }), h('span', 'Elke dag automatisch een back-up maken')),
+        h('label.field', h('span', 'Aantal back-ups om te bewaren'), h('div.row', keep, h('button.btn', { onclick: (e) => act(e.currentTarget, async () => { await api('/api/admin/backups', { method: 'PUT', body: { keep: Number(keep.value) } }); toast('Opgeslagen'); }) }, 'Opslaan'))),
+        h('div.row', h('button.btn.primary', { onclick: (e) => act(e.currentTarget, async () => { await api('/api/admin/backups', { method: 'POST' }); toast('Back-up gemaakt'); await draw(); }) }, icon('download'), 'Nu een back-up maken')))),
+      h('div.section', h('h2', 'Bewaarde back-ups'), d.backups.length ? h('div.list', d.backups.map((b) => h('div.list-item', h('div.grow', h('b', fmtDate(b.created_at)), h('small', `${b.name} · ${fmtSize(b.size)}`)),
+        h('button.btn.sm', { onclick: () => download(b.name) }, icon('download'), 'Downloaden'),
+        h('button.btn.sm.danger', { 'aria-label': 'Verwijderen', onclick: async () => { if (await confirmDialog('Back-up verwijderen?', `${b.name} wordt van de server gewist.`, 'Verwijderen')) { await api(`/api/admin/backups/${b.name}`, { method: 'DELETE' }); draw(); } } }, icon('trash'))))) : h('p.muted', 'Nog geen back-ups.')),
+      h('p.muted', { style: { fontSize: '13px' } }, 'Een back-up bevat ook wachtwoord-hashes en ingelogde sessies. Bewaar een gedownloade kopie op een veilige plek.'));
+  }
+  draw().catch((e) => toast(e.message, 'bad'));
+}
+
+async function webhooksPage() {
+  const lead = 'Laat Kinoko een bericht sturen als er iets gebeurt, bijvoorbeeld naar een Discord-kanaal.';
+  page('Meldingen', lead);
+  async function draw() {
+    const d = await api('/api/admin/webhooks');
+    const form = (hook = null) => {
+      const name = h('input.input', { placeholder: 'Naam (bijv. Discord #kinoko)', value: hook ? hook.name : '', maxLength: 40 });
+      const url = h('input.input', { placeholder: hook ? `Adres ongewijzigd laten (${hook.url})` : 'https://discord.com/api/webhooks/…', autocomplete: 'off' });
+      const format = h('select.input', { style: { width: 'auto' } }, h('option', { value: 'discord', selected: !hook || hook.format === 'discord' }, 'Discord'), h('option', { value: 'json', selected: hook && hook.format === 'json' }, 'Algemene JSON'));
+      const boxes = d.events.map((e) => [e.id, h('input', { type: 'checkbox', checked: hook ? hook.events.includes(e.id) : e.id !== 'playback.started' })]);
+      const m = openModal(h('form.stack', { onsubmit: (ev) => { ev.preventDefault(); act(ev.submitter, async () => {
+        const body = { name: name.value, format: format.value, events: boxes.filter(([, b]) => b.checked).map(([id]) => id), ...(url.value.trim() && { url: url.value }) };
+        await api(hook ? `/api/admin/webhooks/${hook.id}` : '/api/admin/webhooks', { method: hook ? 'PUT' : 'POST', body }); toast('Opgeslagen'); m.close(); draw();
+      }); } }, h('h2', hook ? 'Webhook bewerken' : 'Webhook toevoegen'), h('label.field', h('span', 'Naam'), name), h('label.field', h('span', 'Adres'), url), h('label.field', h('span', 'Formaat'), format),
+        h('div.stack', { style: { gap: '8px' } }, h('span.muted', 'Stuur een bericht bij:'), d.events.map((e, i) => h('label.row', boxes[i][1], h('span', e.label)))),
+        h('button.btn.primary', 'Opslaan')), { small: true });
+    };
+    main.replaceChildren(h('h1', 'Meldingen'), h('p.lead', lead),
+      h('div.section', d.webhooks.length ? h('div.list', d.webhooks.map((w) => h('div.list-item', h('div.grow', h('b', w.name), h('small', `${w.format === 'discord' ? 'Discord' : 'JSON'} · ${w.url} · ${w.events.length} gebeurtenis${w.events.length === 1 ? '' : 'sen'}`),
+        w.last_error && h('small', { style: { color: 'var(--bad)' } }, `Laatste poging mislukt: ${w.last_error} (${fmtDate(w.last_at)})`)),
+        h('button.btn.sm', { onclick: (e) => act(e.currentTarget, async () => { await api(`/api/admin/webhooks/${w.id}/test`, { method: 'POST' }); toast('Testbericht verstuurd'); draw(); }) }, 'Testen'),
+        h('button.btn.sm', { onclick: () => form(w) }, 'Bewerken'),
+        h('button.btn.sm.danger', { 'aria-label': 'Verwijderen', onclick: async () => { if (await confirmDialog('Webhook verwijderen?', `${w.name} krijgt geen berichten meer.`, 'Verwijderen')) { await api(`/api/admin/webhooks/${w.id}`, { method: 'DELETE' }); draw(); } } }, icon('trash'))))) : h('p.muted', 'Nog geen webhooks.')),
+      h('div.row', h('button.btn.primary', { onclick: () => form() }, icon('plus'), 'Webhook toevoegen')));
+  }
+  draw().catch((e) => toast(e.message, 'bad'));
+}
+
 async function usersPage() {
   page('Gebruikers', 'Iedereen heeft een eigen account met eigen voortgang, lijst en aanbevelingen.');
   async function draw() {
@@ -215,6 +270,8 @@ async function usersPage() {
     const inviteUrl = (c) => `${location.origin}/join/${c}`;
     main.replaceChildren(h('h1', 'Gebruikers'), h('p.lead', 'Iedereen heeft een eigen account met eigen voortgang, lijst en aanbevelingen.'),
       h('div.section', h('div.list', d.users.map((u) => h('div.list-item', h(`div.avatar.${u.avatar}`, u.name[0]), h('div.grow', h('b', u.name), h('small', u.role === 'admin' ? 'Beheerder' : 'Kijker')),
+        h('select.input', { title: 'Maximale streamkwaliteit', 'aria-label': `Maximale kwaliteit voor ${u.name}`, style: { width: 'auto', height: '34px' }, onchange: (e) => act(null, async () => { await api(`/api/admin/users/${u.id}`, { method: 'PUT', body: { maxQuality: e.target.value } }); toast('Opgeslagen'); }) },
+          [['', 'Geen limiet'], ['1080', 'Max. 1080p · 8 Mbps'], ['720', 'Max. 720p · 4 Mbps'], ['480', 'Max. 480p · 1,5 Mbps'], ['360', 'Max. 360p · 0,7 Mbps']].map(([v, l]) => h('option', { value: v, selected: (u.maxQuality || '') === v }, l))),
         u.id !== state.user.id && h('button.btn.sm.danger', { onclick: async () => { if (await confirmDialog('Gebruiker verwijderen?', `${u.name} kan niet meer inloggen en de kijkgeschiedenis wordt gewist.`, 'Verwijderen')) { await api(`/api/admin/users/${u.id}`, { method: 'DELETE' }); draw(); } } }, icon('trash')))))),
       h('div.section', h('h2', 'Uitnodigen'), h('div.card-box.stack', h('p.muted', 'Maak een uitnodigingslink. Wie hem opent kiest zelf een naam en wachtwoord. De link is 7 dagen geldig en werkt één keer.'),
         d.invites.map((i) => h('div.codebox', h('span.grow', inviteUrl(i.code)), h('button.btn.sm', { onclick: () => copyText(inviteUrl(i.code), 'Link gekopieerd') }, icon('copy')), h('button.btn.sm.danger', { onclick: async () => { await api(`/api/admin/users/invite/${i.code}`, { method: 'DELETE' }); draw(); } }, icon('x')))),

@@ -27,6 +27,7 @@ export async function startPlayback(opts) {
   let detail = null, episodes = [], episode = null, versions = [];
   let fileId = opts.fileId || null, quality = opts.quality || 'original', audio = 0;
   let play = null, hls = null, ws = null, closed = false;
+  let subOffset = 0, offsetTimer = null, audioChosen = false;
   let suppress = false, upnextShown = false, upnextDismissed = false, countdown = null, idleTimer = null, progressTimer = null;
 
   const video = h('video', { playsInline: true, preload: 'auto', crossOrigin: 'anonymous' });
@@ -69,7 +70,7 @@ export async function startPlayback(opts) {
   function jump(d) { video.currentTime = Math.max(0, Math.min(duration() - 1, video.currentTime + d)); wake(); }
   video.addEventListener('click', toggle);
   video.addEventListener('play', () => { playBtn.replaceChildren(icon('pause')); flash('play'); wake(); send('play'); });
-  video.addEventListener('pause', () => { playBtn.replaceChildren(icon('play')); if (!video.ended) flash('pause'); el.classList.remove('idle'); send('pause'); report(); });
+  video.addEventListener('pause', () => { playBtn.replaceChildren(icon('play')); if (!video.ended) flash('pause'); el.classList.remove('idle'); send('pause'); report(false, !video.ended && !video.seeking); });
   video.addEventListener('seeked', () => { send('seek'); upnextCheckReset(); });
   video.addEventListener('waiting', () => spinner(true));
   video.addEventListener('playing', () => spinner(false));
@@ -140,7 +141,7 @@ export async function startPlayback(opts) {
   async function goNext() {
     const next = nextEpisode(); if (!next) return;
     report(true); hideUpNext(); upnextDismissed = false;
-    episode = next; versions = next.versions; fileId = versions[0].fileId;
+    episode = next; versions = next.versions; fileId = versions[0].fileId; audio = 0; audioChosen = false; if (quality !== 'original' && !versions[0].qualities.includes(quality)) quality = 'original';
     if (ws) ws.send(JSON.stringify({ t: 'load', fileId })); // room follows through the 'load' broadcast
     else await load(0);
   }
@@ -156,6 +157,12 @@ export async function startPlayback(opts) {
     spinner(true); hideUpNext(); if (skipEl) { skipEl.remove(); skipEl = null; }
     if (hls) { hls.destroy(); hls = null; }
     if (play && play.sessionId && !room) api(`/api/hls/${play.sessionId}`, { method: 'DELETE' }).catch(() => {});
+    // A series remembers the audio language the user picked; the browser needs a conversion for a non-default track.
+    const pref = detail && detail.prefs, ver = versions.find((v) => v.fileId === fileId);
+    if (!audioChosen && pref && pref.audioLang && ver && ver.audio.length > 1) {
+      const a = ver.audio.find((x) => x.lang === pref.audioLang);
+      if (a && a.index !== audio) { audio = a.index; if (audio !== 0 && quality === 'original') quality = ver.qualities[1] || 'original'; }
+    }
     const body = { fileId, quality, audio, caps: browserCaps() };
     try {
       play = room
@@ -164,8 +171,10 @@ export async function startPlayback(opts) {
     } catch (e) { toast(e.message, 'bad'); spinner(false); return; }
     fileId = play.fileId;
     for (const t of [...video.querySelectorAll('track')]) t.remove();
-    const want = localStorage.getItem('kinoko_sub') || '';
-    for (const s of play.subtitles) addTrack(s, s.lang === want);
+    subOffset = Number(play.subOffsetMs) || 0;
+    const want = pref && pref.subLang ? (pref.subLang === 'off' ? '' : pref.subLang) : (localStorage.getItem('kinoko_sub') || '');
+    let shown = false;
+    for (const s of play.subtitles) { const on = !shown && s.lang === want; addTrack(s, on); shown = shown || on; }
     // markers on the seek bar
     for (const m of rail.querySelectorAll('.mark')) m.remove();
     if (play.markers.intro && play.duration) rail.append(h('div.mark', { style: { left: `${(play.markers.intro.start / play.duration) * 100}%`, width: `${((play.markers.intro.end - play.markers.intro.start) / play.duration) * 100}%` } }));
@@ -187,8 +196,25 @@ export async function startPlayback(opts) {
     t.dataset.id = s.id;
     video.append(t);
     t.track.mode = on ? 'showing' : 'disabled';
+    t.addEventListener('load', syncOffset);
     return t;
   }
+  // Subtitle timing: cues are moved in place; each track remembers how far it was already moved.
+  function syncOffset() {
+    for (const el of video.querySelectorAll('track')) {
+      const tr = el.track, diff = (subOffset - (el._moved || 0)) / 1000;
+      if (!diff || !tr.cues || !tr.cues.length) continue;
+      for (const c of [...tr.cues]) { c.startTime = Math.max(0, c.startTime + diff); c.endTime = Math.max(0.01, c.endTime + diff); }
+      el._moved = subOffset;
+    }
+  }
+  function shiftSubs(ms) {
+    subOffset = ms === 0 ? 0 : Math.max(-600000, Math.min(600000, subOffset + ms));
+    syncOffset();
+    clearTimeout(offsetTimer);
+    if (!isGuest) offsetTimer = setTimeout(() => api(`/api/files/${fileId}/sub-offset`, { method: 'PUT', body: { offsetMs: subOffset } }).catch(() => {}), 800);
+  }
+  const savePref = (body) => { if (!isGuest && detail && detail.kind === 'show') { detail.prefs = { ...(detail.prefs || {}), ...body }; api(`/api/titles/${detail.id}/prefs`, { method: 'PUT', body }).catch(() => {}); } };
 
   // ---- panels ----------------------------------------------------------------
   function panel(kind) {
@@ -199,8 +225,14 @@ export async function startPlayback(opts) {
     if (kind === 'subs') {
       const tracks = [...video.querySelectorAll('track')];
       const active = tracks.find((t) => t.track.mode === 'showing');
-      const choose = (t) => { for (const x of tracks) x.track.mode = x === t ? 'showing' : 'disabled'; localStorage.setItem('kinoko_sub', t ? t.srclang : ''); };
+      const choose = (t) => { for (const x of tracks) x.track.mode = x === t ? 'showing' : 'disabled'; localStorage.setItem('kinoko_sub', t ? t.srclang : ''); savePref({ subLang: t ? t.srclang : 'off' }); setTimeout(syncOffset, 300); };
       p.append(h('h4', 'Ondertitels'), opt('Uit', !active, () => choose(null)), tracks.map((t) => opt(t.label, t === active, () => choose(t))));
+      const offLabel = h('b', { style: { minWidth: '82px', textAlign: 'center' } });
+      const drawOff = () => { offLabel.textContent = subOffset ? `${subOffset > 0 ? '+' : '−'}${(Math.abs(subOffset) / 1000).toFixed(1).replace('.', ',')} s` : 'Gelijk'; };
+      const step = (ms) => h('button.btn.sm', { 'aria-label': ms < 0 ? 'Ondertitels eerder' : 'Ondertitels later', onclick: () => { shiftSubs(ms); drawOff(); } }, ms < 0 ? '−0,1 s' : '+0,1 s');
+      drawOff();
+      if (tracks.length) p.append(h('h4', 'Timing'), h('div.row', { style: { padding: '4px 10px 8px', gap: '8px' } }, step(-100), offLabel, step(100), h('button.btn.sm.ghost', { onclick: () => { shiftSubs(0); drawOff(); } }, 'Herstel')),
+        h('p.faint', { style: { padding: '0 10px 6px', fontSize: '12.5px' } }, 'Komen de ondertitels te vroeg? Kies +. Te laat? Kies −.'));
       const results = h('div');
       p.append(h('h4', 'Online zoeken'), h('button.opt', { onclick: async (e) => {
         e.currentTarget.disabled = true; results.replaceChildren(h('p.muted', { style: { padding: '8px 10px' } }, 'Zoeken…'));
@@ -224,7 +256,7 @@ export async function startPlayback(opts) {
         p.append(h('h4', 'Kwaliteit'), cur.qualities.map((q) => opt(Q_LABEL[q] || q, String(q) === String(play.mode === 'direct' ? 'original' : play.quality), () => { quality = q; load(video.currentTime); }, q === 'original' ? fmtBitrate(cur.bitrate) : 'omgezet')));
         if (cur.audio.length > 1) p.append(h('h4', 'Audio'), cur.audio.map((a) => opt(`${(a.lang || 'und').toUpperCase()} · ${a.codec.toUpperCase()}${a.title ? ' · ' + a.title : ''}`, a.index === audio, () => {
           // The browser can't switch tracks inside a file, so another track means a server-side conversion.
-          audio = a.index; if (quality === 'original') quality = cur.qualities[1] || 'original'; load(video.currentTime);
+          audio = a.index; audioChosen = true; savePref({ audioLang: a.lang && a.lang !== 'und' ? a.lang : '' }); if (quality === 'original') quality = cur.qualities[1] || 'original'; load(video.currentTime);
         })));
         p.append(h('p.faint', { style: { padding: '8px 10px', fontSize: '12.5px' } }, `Bron: ${cur.server.name}${play.mode === 'hls' ? ' · wordt live omgezet' : ' · direct'}`));
       }
@@ -233,9 +265,9 @@ export async function startPlayback(opts) {
   }
 
   // ---- progress --------------------------------------------------------------
-  function report(finished = false) {
+  function report(finished = false, paused = false) {
     if (isGuest || !detail || !video.currentTime) return;
-    api('/api/progress', { method: 'POST', body: { titleId: detail.id, episodeId: episode ? episode.id : 0, position: video.currentTime, duration: duration(), ...(finished ? { watched: true } : {}) } }).catch(() => {});
+    api('/api/progress', { method: 'POST', body: { titleId: detail.id, episodeId: episode ? episode.id : 0, position: video.currentTime, duration: duration(), ...(finished ? { watched: true } : {}), ...(paused && !room ? { paused: true } : {}) } }).catch(() => {});
   }
   progressTimer = setInterval(() => { if (!video.paused) report(); }, 10_000);
 
@@ -302,7 +334,7 @@ export async function startPlayback(opts) {
   }
   document.addEventListener('keydown', onKey);
   function cleanup() {
-    clearInterval(progressTimer); clearInterval(countdown); clearTimeout(idleTimer);
+    clearInterval(progressTimer); clearInterval(countdown); clearTimeout(idleTimer); clearTimeout(offsetTimer);
     document.removeEventListener('keydown', onKey);
     if (ws) { ws.onclose = null; ws.close(); }
     if (hls) hls.destroy();
@@ -377,6 +409,26 @@ export async function joinRoomView({ code }) {
     h('button.btn.primary.lg', { style: { width: '100%', marginTop: '18px' } }, icon('play'), 'Meekijken'),
     h('p.faint', { style: { marginTop: '14px', fontSize: '13px', textAlign: 'center' } }, 'Heb je een account op deze server? ', h('a', { href: `/login?next=/w/${code}` }, 'Log in'),
       ' · ', h('a', { href: `kinoko://w/${code}`, target: '_self' }, 'Open in de Kinoko-app')))));
+}
+
+// ---------------------------------------------------------------------------
+// Bonus material (trailers, featurettes): a plain player, no progress kept
+// ---------------------------------------------------------------------------
+export function playExtra(x) {
+  const video = h('video', { autoplay: true, controls: true, playsInline: true });
+  let hls = null, session = null;
+  const el = h('div.player', h('div.stage', video, h('div.p-top', { style: { position: 'absolute', top: 0, left: 0, right: 0, background: 'linear-gradient(#000b, transparent)' } },
+    h('button.icon-btn', { 'aria-label': 'Terug', onclick: () => close() }, icon('back')), h('div.grow', h('h2', x.name), h('small', x.label)))));
+  const unmount = mountLayer(el);
+  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  document.addEventListener('keydown', onKey);
+  function close() { if (hls) hls.destroy(); video.removeAttribute('src'); video.load(); document.removeEventListener('keydown', onKey); if (session) api(`/api/hls/${session}`, { method: 'DELETE' }).catch(() => {}); unmount(); }
+  video.addEventListener('ended', close);
+  api(`/api/extras/${x.id}/play`, { method: 'POST', body: { caps: browserCaps() } }).then((r) => {
+    session = r.sessionId || null;
+    if (r.mode === 'hls' && window.Hls && window.Hls.isSupported()) { hls = new window.Hls(); hls.loadSource(r.url); hls.attachMedia(video); hls.on(window.Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {})); }
+    else video.src = r.url;
+  }).catch((e) => { toast(e.message, 'bad'); close(); });
 }
 
 // ---------------------------------------------------------------------------
