@@ -207,6 +207,27 @@ CREATE TABLE IF NOT EXISTS iptv_favs (
 );
 `);
 
+// ---- migrations -------------------------------------------------------------
+// The schema above is the baseline (user_version 0). Every later change is a
+// numbered step here: entry i brings the database to version i + 1. A step runs
+// once, inside a transaction, and may only add — never drop data. Append only;
+// never edit or reorder a step that has shipped.
+export function addColumn(database, table, column, definition) {
+  if (!database.prepare(`SELECT 1 FROM pragma_table_info('${table}') WHERE name = ?`).get(column)) {
+    database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+export const MIGRATIONS = [];
+
+export function migrate(database = db, steps = MIGRATIONS) {
+  const from = database.pragma('user_version', { simple: true });
+  for (let i = from; i < steps.length; i++) {
+    database.transaction(() => { steps[i](database); database.pragma(`user_version = ${i + 1}`); })();
+  }
+  return database.pragma('user_version', { simple: true });
+}
+migrate();
+
 const getStmt = db.prepare('SELECT value FROM settings WHERE key = ?');
 const setStmt = db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
 

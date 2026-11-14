@@ -211,3 +211,20 @@ test('which() finds programs without a shell', async () => {
   assert.equal(which('sh; touch /tmp/kinoko-injectie'), false);
   assert.equal(which('../bin/sh'), false);
 });
+
+test('migrations run once, in order, and a failing step leaves the database as it was', async () => {
+  const { default: Database } = await import('better-sqlite3');
+  const { migrate, addColumn } = await import('../src/db.js');
+  const d = new Database(':memory:');
+  d.exec('CREATE TABLE t (id INTEGER PRIMARY KEY, a TEXT)'); d.prepare('INSERT INTO t (a) VALUES (?)').run('blijft');
+  let runs = 0;
+  const steps = [(x) => { runs++; addColumn(x, 't', 'b', 'TEXT NOT NULL DEFAULT \'\''); }, (x) => { runs++; x.exec('CREATE TABLE u (id INTEGER PRIMARY KEY)'); }];
+  assert.equal(migrate(d, steps), 2);
+  assert.equal(migrate(d, steps), 2);
+  assert.equal(runs, 2);
+  assert.deepEqual(d.prepare('SELECT a, b FROM t').get(), { a: 'blijft', b: '' });
+  addColumn(d, 't', 'b', 'TEXT');   // idempotent
+  assert.throws(() => migrate(d, [...steps, (x) => { x.exec('CREATE TABLE v (id INTEGER)'); throw new Error('stuk'); }]));
+  assert.equal(d.pragma('user_version', { simple: true }), 2);
+  assert.equal(d.prepare("SELECT COUNT(*) c FROM sqlite_master WHERE name = 'v'").get().c, 0);
+});
