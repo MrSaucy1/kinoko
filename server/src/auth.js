@@ -40,7 +40,8 @@ export function createSession(userId, device = '') {
 }
 
 export const mustSetup2fa = (u) => u.role === 'admin' && !u.totp_enabled && settings.get('require_2fa_admins', false) === true;
-export const publicUser = (u) => ({ id: u.id, name: u.name, role: u.role, avatar: u.avatar, maxQuality: u.max_quality || '', twoFactor: !!u.totp_enabled, mustSetup2fa: mustSetup2fa(u) });
+export const publicUser = (u) => ({ id: u.id, name: u.name, role: u.role, avatar: u.avatar, maxQuality: u.max_quality || '', twoFactor: !!u.totp_enabled, mustSetup2fa: mustSetup2fa(u),
+  kids: u.role !== 'admin' && Number.isInteger(u.max_age), kidsHome: u.role !== 'admin' && Number.isInteger(u.max_age) && !!u.kids_home });
 
 /** Checks the second factor: an authenticator code, or one of the recovery codes (which is then used up). */
 export function checkSecondFactor(u, code) {
@@ -255,8 +256,9 @@ export default async function routes(app) {
 
   // --- admin: users -------------------------------------------------------
   app.get('/api/admin/users', { preHandler: requireAdmin }, async () => ({
-    users: db.prepare('SELECT id, name, role, avatar, created_at, max_quality AS maxQuality, totp_enabled, all_libraries, allow_peers FROM users ORDER BY id').all()
-      .map(({ totp_enabled, all_libraries, allow_peers, ...u }) => ({ ...u, twoFactor: !!totp_enabled, allLibraries: !!all_libraries, allowPeers: !!allow_peers,
+    users: db.prepare('SELECT id, name, role, avatar, created_at, max_quality AS maxQuality, totp_enabled, all_libraries, allow_peers, max_age, hide_unrated, kids_home FROM users ORDER BY id').all()
+      .map(({ totp_enabled, all_libraries, allow_peers, max_age, hide_unrated, kids_home, ...u }) => ({ ...u, twoFactor: !!totp_enabled, allLibraries: !!all_libraries, allowPeers: !!allow_peers,
+        maxAge: max_age, hideUnrated: !!hide_unrated, kidsHome: !!kids_home,
         libraries: db.prepare('SELECT library_id FROM library_access WHERE user_id = ?').all(u.id).map((r) => r.library_id) })),
     libraries: db.prepare('SELECT id, name, type FROM libraries ORDER BY id').all(),
     invites: db.prepare('SELECT code, expires_at FROM user_invites WHERE used_by IS NULL AND expires_at > ? ORDER BY created_at DESC').all(now()),
@@ -271,7 +273,13 @@ export default async function routes(app) {
     const id = Number(req.params.id);
     if (!db.prepare('SELECT 1 FROM users WHERE id = ?').get(id)) throw new HttpError(404, 'Gebruiker niet gevonden.');
     const target = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
-    const { maxQuality, allLibraries, allowPeers, libraries, reset2fa } = req.body || {};
+    const { maxQuality, allLibraries, allowPeers, libraries, reset2fa, maxAge, hideUnrated, kidsHome } = req.body || {};
+    if (maxAge !== undefined) {
+      if (maxAge !== null && ![0, 6, 9, 12, 14, 16, 18].includes(maxAge)) throw new HttpError(400, 'Kies een leeftijd uit de lijst.');
+      db.prepare('UPDATE users SET max_age = ? WHERE id = ?').run(maxAge, id);
+    }
+    if (typeof hideUnrated === 'boolean') db.prepare('UPDATE users SET hide_unrated = ? WHERE id = ?').run(hideUnrated ? 1 : 0, id);
+    if (typeof kidsHome === 'boolean') db.prepare('UPDATE users SET kids_home = ? WHERE id = ?').run(kidsHome ? 1 : 0, id);
     if (maxQuality !== undefined) {
       if (!['', '1080', '720', '480', '360'].includes(String(maxQuality))) throw new HttpError(400, 'Onbekende kwaliteit.');
       db.prepare('UPDATE users SET max_quality = ? WHERE id = ?').run(String(maxQuality), id);
@@ -288,7 +296,7 @@ export default async function routes(app) {
       db.prepare("UPDATE users SET totp_enabled = 0, totp_secret = NULL, totp_last = 0, recovery_codes = '[]' WHERE id = ?").run(id);
       audit('2fa.reset', { user: req.user, ip: req.ip, detail: target.name });
     }
-    if (maxQuality !== undefined || typeof allLibraries === 'boolean' || typeof allowPeers === 'boolean' || Array.isArray(libraries)) audit('user.update', { user: req.user, ip: req.ip, detail: `${target.name}: rechten of limiet aangepast` });
+    if (maxAge !== undefined || typeof hideUnrated === 'boolean' || maxQuality !== undefined || typeof allLibraries === 'boolean' || typeof allowPeers === 'boolean' || Array.isArray(libraries)) audit('user.update', { user: req.user, ip: req.ip, detail: `${target.name}: rechten of limiet aangepast` });
     return { ok: true };
   });
   app.delete('/api/admin/users/:id', { preHandler: requireAdmin }, async (req) => {

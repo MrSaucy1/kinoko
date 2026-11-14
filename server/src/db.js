@@ -293,6 +293,17 @@ export const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS audit_action ON audit_log(action, id);
     `);
   },
+  // 3 — fase 3: age ratings, kids mode, trickplay.
+  (d) => {
+    addColumn(d, 'titles', 'age', 'INTEGER');                               // minimum age (0 = AL), null = unknown
+    addColumn(d, 'titles', 'age_source', 'TEXT');
+    addColumn(d, 'users', 'max_age', 'INTEGER');                            // null = no limit
+    addColumn(d, 'users', 'hide_unrated', 'INTEGER NOT NULL DEFAULT 1');    // with a limit: hide titles without a rating
+    addColumn(d, 'users', 'kids_home', 'INTEGER NOT NULL DEFAULT 0');       // simplified home
+    addColumn(d, 'libraries', 'trickplay', 'INTEGER NOT NULL DEFAULT 0');   // seek previews for this library
+    addColumn(d, 'files', 'trickplay', 'TEXT');                             // JSON once generated, 'none' when it failed
+    d.exec('CREATE INDEX IF NOT EXISTS titles_age ON titles(age)');
+  },
 ];
 
 export function migrate(database = db, steps = MIGRATIONS) {

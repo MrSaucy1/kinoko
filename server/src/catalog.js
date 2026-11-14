@@ -5,7 +5,8 @@ import { requireUser } from './auth.js';
 import { imgUrl } from './metadata.js';
 import { QUALITIES } from './stream.js';
 import { EXTRA_LABEL } from './library.js';
-import { scopeFor, visibleTitles, canSeeFile, fileSql, requireTitle } from './access.js';
+import { scopeFor, visibleTitles, canSeeFile, canSeeExtra, fileSql, requireTitle } from './access.js';
+import { ageLabel } from './ratings.js';
 
 /** Functions here take a user row; an id is accepted too (tests, older callers). */
 const asUser = (u) => (u && typeof u === 'object' ? u : db.prepare('SELECT * FROM users WHERE id = ?').get(u) || null);
@@ -32,7 +33,7 @@ export function resolutionLabel(f) {
 
 export function card(t) {
   return {
-    id: t.id, kind: t.kind, title: t.title, year: t.year, rating: t.rating, runtime: t.runtime,
+    id: t.id, kind: t.kind, title: t.title, year: t.year, rating: t.rating, runtime: t.runtime, age: ageLabel(t.age),
     genres: genresOf(t), overview: t.overview,
     poster: imgUrl('t', t.id, 'poster', t.poster), backdrop: imgUrl('t', t.id, 'backdrop', t.backdrop),
   };
@@ -103,8 +104,8 @@ export function titleDetail(id, who) {
     inList: userId ? !!db.prepare('SELECT 1 FROM mylist WHERE user_id = ? AND title_id = ?').get(userId, t.id) : false,
     collections: db.prepare('SELECT c.id, c.name FROM collections c JOIN collection_items i ON i.collection_id = c.id WHERE i.title_id = ?').all(t.id),
     similar: similarTo(t, 12, vis),
-    extras: db.prepare('SELECT id, name, kind, duration, library_id FROM extras WHERE title_id = ? ORDER BY kind, name').all(t.id)
-      .filter((x) => scope.all || scope.libs.has(x.library_id)).map((x) => ({ id: x.id, name: x.name, kind: x.kind, label: EXTRA_LABEL[x.kind] || 'Extra', duration: x.duration })),
+    extras: db.prepare('SELECT id, name, kind, duration, library_id, title_id FROM extras WHERE title_id = ? ORDER BY kind, name').all(t.id)
+      .filter((x) => canSeeExtra(scope, x)).map((x) => ({ id: x.id, name: x.name, kind: x.kind, label: EXTRA_LABEL[x.kind] || 'Extra', duration: x.duration })),
   };
   if (userId && t.kind === 'show') {
     const p = db.prepare('SELECT audio_lang, sub_lang FROM series_prefs WHERE user_id = ? AND title_id = ?').get(userId, t.id);
@@ -184,6 +185,7 @@ export function home(who, kind = null) {
   const day = Math.floor(Date.now() / 86400000);
   const rnd = seeded(day * 31 + userId);
   const rows = [];
+  const kids = !!(scope.kids && user.kids_home);
   const push = (id, title, items, extra = {}) => { if (items.length) rows.push({ id, title, items, ...extra }); };
 
   const cont = continueWatching(userId, scope, vis).filter((c) => !kind || c.kind === kind);
@@ -196,7 +198,8 @@ export function home(who, kind = null) {
   push('mylist', 'Mijn lijst', list.map(card));
 
   const taste = tasteProfile(userId);
-  if (taste.genres.size) {
+  // The children's home stays simple: continue, new, own list and a few genres.
+  if (taste.genres.size && !kids) {
     const rec = all.filter((t) => !taste.seen.has(t.id))
       .map((t) => ({ t, s: json(t.genres, []).reduce((n, g) => n + (taste.genres.get(g) || 0), 0) + (t.rating || 5) / 5 + rnd() }))
       .filter((x) => x.s > 2).sort((a, b) => b.s - a.s).slice(0, 20);
@@ -206,28 +209,28 @@ export function home(who, kind = null) {
     if (lastT && seen(vis, lastT.id)) push('because', `Omdat je ${lastT.title} keek`, similarTo(lastT, 16, vis).filter((c) => !kind || c.kind === kind));
   }
 
-  if (kind !== 'show') {
+  if (kind !== 'show' && !kids) {
     const cols = db.prepare('SELECT c.*, (SELECT COUNT(*) FROM collection_items WHERE collection_id = c.id) n FROM collections c ORDER BY n DESC, name LIMIT 30').all();
     push('collections', 'Collecties', cols.map((c) => collectionCard(c, vis)).filter((c) => c.count >= 2), { style: 'collection' });
   }
 
-  push('top', 'Hoog gewaardeerd', all.filter((t) => t.rating >= 7.5).sort((a, b) => b.rating - a.rating).slice(0, 20).map(card));
+  if (!kids) push('top', 'Hoog gewaardeerd', all.filter((t) => t.rating >= 7.5).sort((a, b) => b.rating - a.rating).slice(0, 20).map(card));
 
   // One row per genre that has enough in it; order rotates per day so home feels fresh.
   const byGenre = new Map();
   for (const t of all) for (const g of genresOf(t)) { if (!byGenre.has(g)) byGenre.set(g, []); byGenre.get(g).push(t); }
   const genreRows = [...byGenre.entries()].filter(([, l]) => l.length >= 3);
-  for (const [g, l] of shuffle(genreRows, rnd).slice(0, 10)) push(`genre:${g}`, g, shuffle(l, rnd).slice(0, 20).map(card), { genre: g });
+  for (const [g, l] of shuffle(genreRows, rnd).slice(0, kids ? 4 : 10)) push(`genre:${g}`, g, shuffle(l, rnd).slice(0, 20).map(card), { genre: g });
 
   const peers = peerNames();
-  for (const [pid, name] of scope.peers ? peers : []) {
+  for (const [pid, name] of scope.peers && !kids ? peers : []) {
     const theirs = all.filter((t) => !t.local_files && db.prepare('SELECT 1 FROM files WHERE title_id = ? AND peer_id = ?').get(t.id, pid));
     push(`peer:${pid}`, `Gedeeld door ${name}`, shuffle(theirs, rnd).slice(0, 20).map(card));
   }
 
   const heroPool = all.filter((t) => t.backdrop && t.overview);
   const hero = shuffle(heroPool.sort((a, b) => (b.file_added || 0) - (a.file_added || 0)).slice(0, 30), rnd).slice(0, 6).map((t) => ({ ...card(t), trailer: t.trailer || null }));
-  return { hero, rows, genres: [...byGenre.keys()].sort((a, b) => a.localeCompare(b)), empty: all.length === 0 };
+  return { hero: kids ? hero.map((x) => ({ ...x, trailer: null })) : hero, rows, genres: [...byGenre.keys()].sort((a, b) => a.localeCompare(b)), empty: all.length === 0, kids };
 }
 
 function collectionCard(c, vis = null) {

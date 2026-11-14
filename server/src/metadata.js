@@ -6,6 +6,7 @@ import { db, now, json, settings, sha256, HttpError } from './db.js';
 import { dataPath } from './config.js';
 import { normKey } from './parse.js';
 import { mergeTitles, onScanFinished } from './library.js';
+import { normalizeAge, pickAge, wikidataAges } from './ratings.js';
 import { requireAdmin } from './auth.js';
 import { rebuildCollections } from './collections.js';
 
@@ -43,6 +44,8 @@ export function parseNfo(xml) {
   if (cast.length) out.cast = cast;
   const directors = tags(xml, 'director'); if (directors.length) out.directors = directors;
   const rating = Number(tag(xml, 'rating') || tag(xml, 'value')); if (rating > 0 && rating <= 10) out.rating = rating;
+  // <mpaa> is free text in practice: "Rated PG-13", "NL:12", "FSK 16" or several joined with " / ".
+  for (const cert of [tag(xml, 'mpaa'), tag(xml, 'certification')].join(' / ').split(/\s*[/,;|]\s*/)) { const age = normalizeAge(cert); if (age !== null) { out.age = age; break; } }
   return out;
 }
 
@@ -147,6 +150,14 @@ function tmdbGet(p, params = {}) {
   return getJson(`${TMDB}${p}?${q}`, { headers });
 }
 
+/** Certifications per country out of a TMDB response (films: release_dates, series: content_ratings). */
+export function tmdbAge(d, kind) {
+  const by = {};
+  if (kind === 'show') for (const r of d.content_ratings?.results || []) (by[r.iso_3166_1] ||= []).push(r.rating);
+  else for (const r of d.release_dates?.results || []) for (const x of r.release_dates || []) if (x.certification) (by[r.iso_3166_1] ||= []).push(x.certification);
+  return pickAge(by);
+}
+
 async function tmdb(kind, title, year, imdbId, tmdbId) {
   const type = kind === 'show' ? 'tv' : 'movie';
   let id = tmdbId;
@@ -170,7 +181,7 @@ async function tmdb(kind, title, year, imdbId, tmdbId) {
     if (!best || bestScore < 70) return null;
     id = best.id;
   }
-  const d = await tmdbGet(`/${type}/${id}`, { append_to_response: 'credits,external_ids,videos', include_video_language: 'nl,en' });
+  const d = await tmdbGet(`/${type}/${id}`, { append_to_response: `credits,external_ids,videos,${kind === 'show' ? 'content_ratings' : 'release_dates'}`, include_video_language: 'nl,en' });
   if (!d) return { error: true };
   let overview = d.overview || '', tagline = d.tagline || '';
   if (!overview) { const en = await tmdbGet(`/${type}/${id}`, { language: 'en-US' }); if (en) { overview = en.overview || ''; tagline = tagline || en.tagline || ''; } }
@@ -187,6 +198,7 @@ async function tmdb(kind, title, year, imdbId, tmdbId) {
     backdrop: d.backdrop_path ? `${TMDB_IMG}/w1280${d.backdrop_path}` : null,
     trailer: trailer ? trailer.key : null,
     collection: d.belongs_to_collection ? { id: d.belongs_to_collection.id, name: d.belongs_to_collection.name } : null,
+    age: tmdbAge(d, kind),
   };
   if (kind === 'show') {
     out.episodes = [];
@@ -253,6 +265,7 @@ export async function enrichTitle(title) {
     backdrop: local.backdrop || r.backdrop || null,
     trailer: r.trailer || null,
     collection: r.collection || null,
+    age: local.age ?? r.age ?? null,
     source: r.source || (Object.keys(local).length ? 'nfo' : 'none'),
   };
   // The same film may already exist under its IMDb id (e.g. synced from a linked server).
@@ -262,9 +275,10 @@ export async function enrichTitle(title) {
     if (other) { mergeTitles(title.id, other.id); id = other.id; }
   }
   db.prepare(`UPDATE titles SET title=?, year=?, imdb_id=?, tmdb_id=?, overview=?, tagline=?, genres=?, cast_json=?, directors=?, rating=?, runtime=?,
-      poster=?, backdrop=?, trailer=?, tmdb_collection=?, meta_source=?, meta_at=? WHERE id=?`)
+      poster=?, backdrop=?, trailer=?, tmdb_collection=?, meta_source=?, meta_at=?, age=COALESCE(?, age), age_source=CASE WHEN ? IS NULL THEN age_source ELSE ? END WHERE id=?`)
     .run(m.title, m.year, m.imdb_id, m.tmdb_id, m.overview, m.tagline, JSON.stringify(m.genres), JSON.stringify(m.cast), JSON.stringify(m.directors),
-      m.rating, m.runtime, m.poster, m.backdrop, m.trailer, m.collection ? JSON.stringify(m.collection) : null, m.source, now(), id);
+      m.rating, m.runtime, m.poster, m.backdrop, m.trailer, m.collection ? JSON.stringify(m.collection) : null, m.source, now(),
+      m.age, m.age, local.age !== undefined ? 'nfo' : 'tmdb', id);
   if (r.episodes) {
     const upd = db.prepare(`UPDATE episodes SET name = CASE WHEN ? != '' THEN ? ELSE name END, overview = ?, still = ?, air_date = ? WHERE title_id = ? AND season = ? AND episode = ?`);
     for (const e of r.episodes) upd.run(e.name, e.name, e.overview, e.still, e.air_date, id, e.season, e.episode);
@@ -292,6 +306,12 @@ export async function enrichPending({ all = false } = {}) {
         const upd = db.prepare('UPDATE titles SET series_json = ? WHERE id = ?');
         for (const t of need) upd.run(JSON.stringify(series.get(t.imdb_id) || []), t.id);
       }
+    }
+    // Age ratings for whatever still has none (no TMDB key, or TMDB did not know).
+    const unrated = db.prepare('SELECT id, imdb_id FROM titles WHERE age IS NULL AND imdb_id IS NOT NULL AND id IN (SELECT title_id FROM files WHERE peer_id IS NULL)').all();
+    if (unrated.length) {
+      const ages = await wikidataAges(unrated.map((t) => t.imdb_id), getJson);
+      if (ages) { const upd = db.prepare("UPDATE titles SET age = ?, age_source = 'wikidata' WHERE id = ? AND age IS NULL"); for (const t of unrated) if (ages.has(t.imdb_id)) upd.run(ages.get(t.imdb_id), t.id); }
     }
     rebuildCollections();
   } finally { metaState.running = false; }
@@ -379,6 +399,19 @@ export default async function routes(app) {
     return { started: true };
   });
   // Manual fix for a wrong or missing match: pin the IMDb id and refetch.
+  // The admin's own judgement beats every source; null hands it back to the sources.
+  app.put('/api/admin/titles/:id/age', { preHandler: requireAdmin }, async (req) => {
+    const age = req.body?.age;
+    if (age !== null && ![0, 6, 9, 12, 14, 16, 18].includes(age)) throw new HttpError(400, 'Kies een leeftijd uit de lijst.');
+    const r = db.prepare("UPDATE titles SET age = ?, age_source = ? WHERE id = ?").run(age, age === null ? null : 'handmatig', Number(req.params.id));
+    if (!r.changes) throw new HttpError(404, 'Titel niet gevonden.');
+    return { ok: true };
+  });
+  app.get('/api/admin/ratings', { preHandler: requireAdmin }, async () => ({
+    unrated: db.prepare('SELECT id, kind, title, year FROM titles WHERE age IS NULL AND id IN (SELECT title_id FROM files) ORDER BY title LIMIT 500').all(),
+    counts: db.prepare('SELECT age, COUNT(*) n FROM titles WHERE id IN (SELECT title_id FROM files) GROUP BY age ORDER BY age').all(),
+  }));
+
   app.post('/api/admin/titles/:id/match', { preHandler: requireAdmin }, async (req) => {
     const t = db.prepare('SELECT * FROM titles WHERE id = ?').get(req.params.id);
     if (!t) throw new HttpError(404, 'Titel niet gevonden.');

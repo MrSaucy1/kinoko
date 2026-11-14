@@ -174,7 +174,11 @@ for (const d of fs.readdirSync(dataPath('transcode'))) if (d.startsWith('live-')
 process.on('exit', () => { for (const s of live.values()) { try { s.proc.kill('SIGKILL'); } catch { /* gone */ } } });
 
 export default async function routes(app) {
-  app.post('/api/iptv/:id/live', { preHandler: requireUser }, async (req) => {
+  // Channels carry no age rating, so an account with an age limit gets no live tv at all.
+  const isKid = (u) => u.role !== 'admin' && Number.isInteger(u.max_age);
+  const noKids = async (req) => { await requireUser(req); if (isKid(req.user)) throw new HttpError(403, 'Live tv is niet beschikbaar voor dit account.'); };
+
+  app.post('/api/iptv/:id/live', { preHandler: noKids }, async (req) => {
     const c = db.prepare('SELECT id, url FROM iptv_channels WHERE id = ?').get(req.params.id);
     if (!c) throw new HttpError(404, 'Zender niet gevonden.');
     const s = live.get(c.id) || startLive(c);
@@ -201,6 +205,7 @@ export default async function routes(app) {
   });
 
   app.get('/api/iptv', { preHandler: requireUser }, async (req) => {
+    if (isKid(req.user)) return { enabled: false, categories: [], groups: [], favorites: 0, channels: [] };
     const favs = new Set(db.prepare('SELECT channel_id FROM iptv_favs WHERE user_id = ?').all(req.user.id).map((r) => r.channel_id));
     const proxy = new Map(db.prepare('SELECT id, proxy FROM iptv_sources').all().map((s) => [s.id, !!s.proxy]));
     const cats = db.prepare('SELECT category, COUNT(*) n FROM iptv_channels GROUP BY category ORDER BY MIN(ord)').all();
@@ -214,7 +219,7 @@ export default async function routes(app) {
     return { enabled: cats.length > 0, categories, groups: groupCategories(categories), favorites: favs.size, channels: rows.map((c) => channelOut(c, favs, proxy)) };
   });
 
-  app.put('/api/iptv/fav/:id', { preHandler: requireUser }, async (req) => {
+  app.put('/api/iptv/fav/:id', { preHandler: noKids }, async (req) => {
     db.prepare('INSERT OR IGNORE INTO iptv_favs (user_id, channel_id) VALUES (?,?)').run(req.user.id, req.params.id);
     return { favorite: true };
   });
@@ -224,7 +229,7 @@ export default async function routes(app) {
   });
 
   // Now/next from the provider's short guide (Xtream only).
-  app.get('/api/iptv/:id/epg', { preHandler: requireUser }, async (req) => {
+  app.get('/api/iptv/:id/epg', { preHandler: noKids }, async (req) => {
     const c = db.prepare('SELECT c.*, s.kind, s.url surl, s.username, s.password FROM iptv_channels c JOIN iptv_sources s ON s.id = c.source_id WHERE c.id = ?').get(req.params.id);
     if (!c) throw new HttpError(404, 'Zender niet gevonden.');
     if (c.kind !== 'xtream') return { programs: [] };
