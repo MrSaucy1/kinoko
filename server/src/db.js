@@ -217,7 +217,56 @@ export function addColumn(database, table, column, definition) {
     database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
 }
-export const MIGRATIONS = [];
+export const MIGRATIONS = [
+  // 1 — fase 1: series preferences, subtitle offsets, extras, per-user quality limit, webhooks.
+  (d) => {
+    d.exec(`
+      CREATE TABLE IF NOT EXISTS series_prefs (
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        title_id INTEGER NOT NULL REFERENCES titles(id) ON DELETE CASCADE,
+        audio_lang TEXT NOT NULL DEFAULT '',
+        sub_lang TEXT NOT NULL DEFAULT '',     -- '' = no preference, 'off' = subtitles off
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (user_id, title_id)
+      );
+      CREATE TABLE IF NOT EXISTS sub_offsets (
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+        offset_ms INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (user_id, file_id)
+      );
+      CREATE TABLE IF NOT EXISTS extras (
+        id INTEGER PRIMARY KEY,
+        library_id INTEGER NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
+        title_id INTEGER NOT NULL REFERENCES titles(id) ON DELETE CASCADE,
+        path TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'extra',
+        size INTEGER NOT NULL DEFAULT 0,
+        mtime INTEGER NOT NULL DEFAULT 0,
+        duration REAL NOT NULL DEFAULT 0,
+        width INTEGER NOT NULL DEFAULT 0,
+        height INTEGER NOT NULL DEFAULT 0,
+        vcodec TEXT NOT NULL DEFAULT '',
+        acodec TEXT NOT NULL DEFAULT '',
+        container TEXT NOT NULL DEFAULT '',
+        added_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS extras_title ON extras(title_id);
+      CREATE TABLE IF NOT EXISTS webhooks (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        url TEXT NOT NULL,
+        format TEXT NOT NULL DEFAULT 'discord' CHECK (format IN ('discord','json')),
+        events TEXT NOT NULL DEFAULT '[]',
+        last_at INTEGER,
+        last_error TEXT,
+        created_at INTEGER NOT NULL
+      );
+    `);
+    addColumn(d, 'users', 'max_quality', "TEXT NOT NULL DEFAULT ''");   // '' = no limit, else a key of QUALITIES
+  },
+];
 
 export function migrate(database = db, steps = MIGRATIONS) {
   const from = database.pragma('user_version', { simple: true });
