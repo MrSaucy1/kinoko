@@ -1,0 +1,9 @@
+# Jail voor Kinoko. Kopieer naar /etc/fail2ban/jail.d/kinoko.local en herstart fail2ban.
+[kinoko]
+enabled  = true
+backend  = systemd
+filter   = kinoko
+port     = 8096
+maxretry = 8
+findtime = 10m
+bantime  = 1h

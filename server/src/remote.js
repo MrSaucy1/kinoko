@@ -8,6 +8,7 @@ import { settings, HttpError } from './db.js';
 import { config } from './config.js';
 import { run } from './ffmpeg.js';
 import { requireAdmin } from './auth.js';
+import { audit } from './audit.js';
 import { publicUrl } from './federation.js';
 
 // Looks the program up in PATH itself; no shell is involved, so a name can never be run as a command.
@@ -115,5 +116,9 @@ export default async function routes(app) {
     return { status: await cloudflaredStatus() };
   });
 
-  app.post('/api/admin/update', { preHandler: requireAdmin }, async () => ({ output: await helper(['update'], 600_000) }));
+  app.post('/api/admin/update', { preHandler: requireAdmin }, async (req) => {
+    const output = await helper(['update'], 600_000);
+    audit('update', { user: req.user, ip: req.ip, detail: output.split('\n').pop() });
+    return { output };
+  });
 }

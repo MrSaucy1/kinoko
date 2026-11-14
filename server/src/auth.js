@@ -1,5 +1,7 @@
 import crypto from 'node:crypto';
-import { db, now, randomToken, sha256, HttpError, settings } from './db.js';
+import { db, now, randomToken, sha256, json, HttpError, settings } from './db.js';
+import { newSecret, verifyCode, otpauthUrl, newRecoveryCodes, normalizeRecovery } from './totp.js';
+import { audit, logAuthFailure, queryAudit, auditDays, ACTIONS } from './audit.js';
 
 const AVATARS = ['violet', 'orchid', 'plum', 'lilac', 'grape', 'iris'];
 
@@ -37,7 +39,20 @@ export function createSession(userId, device = '') {
   return token;
 }
 
-export const publicUser = (u) => ({ id: u.id, name: u.name, role: u.role, avatar: u.avatar, maxQuality: u.max_quality || '' });
+export const mustSetup2fa = (u) => u.role === 'admin' && !u.totp_enabled && settings.get('require_2fa_admins', false) === true;
+export const publicUser = (u) => ({ id: u.id, name: u.name, role: u.role, avatar: u.avatar, maxQuality: u.max_quality || '', twoFactor: !!u.totp_enabled, mustSetup2fa: mustSetup2fa(u) });
+
+/** Checks the second factor: an authenticator code, or one of the recovery codes (which is then used up). */
+export function checkSecondFactor(u, code) {
+  const step = verifyCode(u.totp_secret, code, { after: u.totp_last });
+  if (step) { db.prepare('UPDATE users SET totp_last = ? WHERE id = ?').run(step, u.id); return true; }
+  const rec = normalizeRecovery(code);
+  if (rec.length !== 8) return false;
+  const left = json(u.recovery_codes, []), hash = sha256(rec);
+  if (!left.includes(hash)) return false;
+  db.prepare('UPDATE users SET recovery_codes = ? WHERE id = ?').run(JSON.stringify(left.filter((h) => h !== hash)), u.id);
+  return true;
+}
 
 // Failed-login throttle, per client address. Small and in-memory on purpose:
 // it only has to make online guessing impractical.
@@ -52,11 +67,25 @@ function failed(ip) {
   else f.count++;
 }
 
-export function login(name, password, device, ip) {
-  throttle(ip);
+export function login(name, password, device, ip, code = '') {
+  try { throttle(ip); } catch (e) { logAuthFailure(ip, 'throttled'); throw e; }
   const u = db.prepare('SELECT * FROM users WHERE name = ?').get(String(name || '').trim());
-  if (!u || !verifyPassword(String(password || ''), u.pass)) { failed(ip); throw new HttpError(401, 'Naam of wachtwoord klopt niet.'); }
+  if (!u || !verifyPassword(String(password || ''), u.pass)) {
+    failed(ip); logAuthFailure(ip, 'password');
+    audit('login.fail', { ip, detail: `Naam: ${String(name || '').trim().slice(0, 40)}` });
+    throw new HttpError(401, 'Naam of wachtwoord klopt niet.');
+  }
+  if (u.totp_enabled) {
+    // The password alone is not enough; the client asks for the code and sends both again.
+    if (!String(code || '').trim()) return { totpRequired: true };
+    if (!checkSecondFactor(u, code)) {
+      failed(ip); logAuthFailure(ip, 'totp');
+      audit('login.fail', { user: u, ip, detail: 'Verkeerde code bij tweestapsverificatie' });
+      throw new HttpError(401, 'De code klopt niet. Probeer de volgende code uit je app.');
+    }
+  }
   fails.delete(ip);
+  audit('login.ok', { user: u, ip, detail: String(device || '').slice(0, 40) });
   return { token: createSession(u.id, device), user: publicUser(u) };
 }
 
@@ -120,6 +149,7 @@ export async function requireUser(req) {
 export async function requireAdmin(req) {
   await requireUser(req);
   if (req.user.role !== 'admin') throw new HttpError(403, 'Alleen voor beheerders.');
+  if (mustSetup2fa(req.user)) throw new HttpError(403, 'Stel eerst tweestapsverificatie in voor je account (accountmenu → Tweestapsverificatie).');
 }
 
 export default async function routes(app) {
@@ -132,8 +162,8 @@ export default async function routes(app) {
   }));
 
   app.post('/api/auth/login', async (req) => {
-    const { name, password, device } = req.body || {};
-    return login(name, password, device, req.ip);
+    const { name, password, device, code } = req.body || {};
+    return login(name, password, device, req.ip, code);
   });
 
   app.post('/api/auth/logout', { preHandler: requireUser }, async (req) => {
@@ -155,6 +185,7 @@ export default async function routes(app) {
     const id = createUser({ name, password });
     db.prepare('UPDATE user_invites SET used_by = ? WHERE code = ?').run(id, inv.code);
     const u = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+    audit('user.create', { user: u, ip: req.ip, detail: 'Via uitnodiging' });
     return { token: createSession(id, device), user: publicUser(u) };
   });
 
@@ -164,6 +195,49 @@ export default async function routes(app) {
     if (String(next || '').length < 6) throw new HttpError(400, 'Wachtwoord moet minstens 6 tekens zijn.');
     db.prepare('UPDATE users SET pass = ? WHERE id = ?').run(hashPassword(next), req.user.id);
     revokeOtherSessions(req.user.id, tokenFromRequest(req));
+    audit('user.password', { user: req.user, ip: req.ip });
+    return { ok: true };
+  });
+
+  // --- two-factor sign-in --------------------------------------------------
+  app.post('/api/auth/2fa/setup', { preHandler: requireUser }, async (req) => {
+    if (req.user.totp_enabled) throw new HttpError(400, 'Tweestapsverificatie staat al aan.');
+    const secret = newSecret();
+    db.prepare('UPDATE users SET totp_secret = ? WHERE id = ?').run(secret, req.user.id);
+    // Shown once, to the account's own owner, so it can go into an authenticator app.
+    return { secret, url: otpauthUrl(secret, req.user.name, settings.get('server_name') || 'Kinoko') };
+  });
+  app.post('/api/auth/2fa/enable', { preHandler: requireUser }, async (req) => {
+    throttle(req.ip);
+    if (req.user.totp_enabled) throw new HttpError(400, 'Tweestapsverificatie staat al aan.');
+    const step = verifyCode(req.user.totp_secret, req.body?.code);
+    if (!step) { failed(req.ip); throw new HttpError(400, 'De code klopt niet. Controleer de tijd op je telefoon en probeer het opnieuw.'); }
+    const codes = newRecoveryCodes();
+    db.prepare('UPDATE users SET totp_enabled = 1, totp_last = ?, recovery_codes = ? WHERE id = ?').run(step, JSON.stringify(codes.map((c) => sha256(normalizeRecovery(c)))), req.user.id);
+    audit('2fa.enable', { user: req.user, ip: req.ip });
+    return { ok: true, recoveryCodes: codes };
+  });
+  app.post('/api/auth/2fa/disable', { preHandler: requireUser }, async (req) => {
+    throttle(req.ip);
+    if (!req.user.totp_enabled) return { ok: true };
+    if (req.user.role === 'admin' && settings.get('require_2fa_admins', false) === true) throw new HttpError(403, 'Tweestapsverificatie is verplicht voor beheerders.');
+    const { password, code } = req.body || {};
+    if (!verifyPassword(String(password || ''), req.user.pass) || !checkSecondFactor(req.user, code)) { failed(req.ip); logAuthFailure(req.ip, 'totp'); throw new HttpError(403, 'Wachtwoord of code klopt niet.'); }
+    db.prepare("UPDATE users SET totp_enabled = 0, totp_secret = NULL, totp_last = 0, recovery_codes = '[]' WHERE id = ?").run(req.user.id);
+    audit('2fa.disable', { user: req.user, ip: req.ip });
+    return { ok: true };
+  });
+
+  // --- admin: audit log ----------------------------------------------------
+  app.get('/api/admin/audit', { preHandler: requireAdmin }, async (req) => ({
+    entries: queryAudit({ action: String(req.query.action || ''), q: String(req.query.q || ''), before: req.query.before, limit: req.query.limit }),
+    actions: Object.entries(ACTIONS).map(([id, label]) => ({ id, label })), days: auditDays(),
+  }));
+  app.put('/api/admin/audit', { preHandler: requireAdmin }, async (req) => {
+    const n = Number(req.body?.days);
+    if (!Number.isInteger(n) || n < 1 || n > 3650) throw new HttpError(400, 'Kies een aantal dagen tussen 1 en 3650.');
+    settings.set('audit_days', n);
+    audit('settings.change', { user: req.user, ip: req.ip, detail: `Bewaartermijn audit-log: ${n} dagen` });
     return { ok: true };
   });
 
@@ -181,27 +255,48 @@ export default async function routes(app) {
 
   // --- admin: users -------------------------------------------------------
   app.get('/api/admin/users', { preHandler: requireAdmin }, async () => ({
-    users: db.prepare('SELECT id, name, role, avatar, created_at, max_quality AS maxQuality FROM users ORDER BY id').all(),
+    users: db.prepare('SELECT id, name, role, avatar, created_at, max_quality AS maxQuality, totp_enabled, all_libraries, allow_peers FROM users ORDER BY id').all()
+      .map(({ totp_enabled, all_libraries, allow_peers, ...u }) => ({ ...u, twoFactor: !!totp_enabled, allLibraries: !!all_libraries, allowPeers: !!allow_peers,
+        libraries: db.prepare('SELECT library_id FROM library_access WHERE user_id = ?').all(u.id).map((r) => r.library_id) })),
+    libraries: db.prepare('SELECT id, name, type FROM libraries ORDER BY id').all(),
     invites: db.prepare('SELECT code, expires_at FROM user_invites WHERE used_by IS NULL AND expires_at > ? ORDER BY created_at DESC').all(now()),
   }));
   app.post('/api/admin/users', { preHandler: requireAdmin }, async (req) => {
     const { name, password, role } = req.body || {};
-    return { id: createUser({ name, password, role: role === 'admin' ? 'admin' : 'user' }) };
+    const id = createUser({ name, password, role: role === 'admin' ? 'admin' : 'user' });
+    audit('user.create', { user: req.user, ip: req.ip, detail: `${String(name).trim()} (${role === 'admin' ? 'beheerder' : 'kijker'})` });
+    return { id };
   });
   app.put('/api/admin/users/:id', { preHandler: requireAdmin }, async (req) => {
     const id = Number(req.params.id);
     if (!db.prepare('SELECT 1 FROM users WHERE id = ?').get(id)) throw new HttpError(404, 'Gebruiker niet gevonden.');
-    const { maxQuality } = req.body || {};
+    const target = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+    const { maxQuality, allLibraries, allowPeers, libraries, reset2fa } = req.body || {};
     if (maxQuality !== undefined) {
       if (!['', '1080', '720', '480', '360'].includes(String(maxQuality))) throw new HttpError(400, 'Onbekende kwaliteit.');
       db.prepare('UPDATE users SET max_quality = ? WHERE id = ?').run(String(maxQuality), id);
     }
+    if (typeof allLibraries === 'boolean') db.prepare('UPDATE users SET all_libraries = ? WHERE id = ?').run(allLibraries ? 1 : 0, id);
+    if (typeof allowPeers === 'boolean') db.prepare('UPDATE users SET allow_peers = ? WHERE id = ?').run(allowPeers ? 1 : 0, id);
+    if (Array.isArray(libraries)) {
+      db.transaction(() => {
+        db.prepare('DELETE FROM library_access WHERE user_id = ?').run(id);
+        for (const lib of new Set(libraries.map(Number))) if (db.prepare('SELECT 1 FROM libraries WHERE id = ?').get(lib)) db.prepare('INSERT INTO library_access (user_id, library_id) VALUES (?,?)').run(id, lib);
+      })();
+    }
+    if (reset2fa === true) {
+      db.prepare("UPDATE users SET totp_enabled = 0, totp_secret = NULL, totp_last = 0, recovery_codes = '[]' WHERE id = ?").run(id);
+      audit('2fa.reset', { user: req.user, ip: req.ip, detail: target.name });
+    }
+    if (maxQuality !== undefined || typeof allLibraries === 'boolean' || typeof allowPeers === 'boolean' || Array.isArray(libraries)) audit('user.update', { user: req.user, ip: req.ip, detail: `${target.name}: rechten of limiet aangepast` });
     return { ok: true };
   });
   app.delete('/api/admin/users/:id', { preHandler: requireAdmin }, async (req) => {
     const id = Number(req.params.id);
     if (id === req.user.id) throw new HttpError(400, 'Je kunt je eigen account niet verwijderen.');
+    const gone = db.prepare('SELECT name FROM users WHERE id = ?').get(id);
     db.prepare('DELETE FROM users WHERE id = ?').run(id);
+    if (gone) audit('user.delete', { user: req.user, ip: req.ip, detail: gone.name });
     return { ok: true };
   });
   app.post('/api/admin/users/invite', { preHandler: requireAdmin }, async () => {

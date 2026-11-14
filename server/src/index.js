@@ -7,6 +7,7 @@ import fastifyWebsocket from '@fastify/websocket';
 import { config } from './config.js';
 import { db, settings, HttpError } from './db.js';
 import authRoutes, { needsSetup, createUser, createSession, publicUser, requireAdmin, purgeSessions } from './auth.js';
+import { audit, purgeAudit } from './audit.js';
 import libraryRoutes, { scanAll, scanState, setLibrariesChanged } from './library.js';
 import eventRoutes from './events.js';
 import backupRoutes, { backupIfDue } from './backup.js';
@@ -24,7 +25,11 @@ import remoteRoutes, { lanUrls } from './remote.js';
 import { detectHardware, ffmpegAvailable } from './ffmpeg.js';
 
 const require = createRequire(import.meta.url);
-const app = Fastify({ trustProxy: true, bodyLimit: 2 * 1024 * 1024, logger: process.env.KINOKO_LOG ? { level: process.env.KINOKO_LOG } : false });
+// Forwarded addresses are believed only from a proxy on this machine or the local network (Tailscale,
+// cloudflared, a reverse proxy at home). Otherwise anyone could pick the address that ends up in the
+// sign-in throttle and the fail2ban log. Override with KINOKO_TRUST_PROXY (comma separated, or "all").
+const trustProxy = process.env.KINOKO_TRUST_PROXY === 'all' ? true : (process.env.KINOKO_TRUST_PROXY || 'loopback,linklocal,uniquelocal').split(',').map((s) => s.trim()).filter(Boolean);
+const app = Fastify({ trustProxy, bodyLimit: 2 * 1024 * 1024, logger: process.env.KINOKO_LOG ? { level: process.env.KINOKO_LOG } : false });
 
 app.setErrorHandler((err, req, reply) => {
   if (err instanceof HttpError) return reply.code(err.status).send({ error: err.message });
@@ -49,7 +54,7 @@ app.post('/api/setup', async (req) => {
 app.get('/api/admin/settings', { preHandler: requireAdmin }, async (req) => ({
   serverName: settings.get('server_name'), publicUrl: publicUrl(), currentUrl: publicUrl(req), lan: lanUrls(),
   onboarded: settings.get('onboarded', false), scanHours: settings.get('scan_hours', 6), version: config.version,
-  ffmpeg: await ffmpegAvailable(), fingerprint: settings.get('fingerprint', true), sessionIdleDays: settings.get('session_idle_days', 90),
+  ffmpeg: await ffmpegAvailable(), fingerprint: settings.get('fingerprint', true), sessionIdleDays: settings.get('session_idle_days', 90), require2faAdmins: settings.get('require_2fa_admins', false) === true,
   counts: {
     movies: db.prepare("SELECT COUNT(*) c FROM titles WHERE kind = 'movie'").get().c,
     shows: db.prepare("SELECT COUNT(*) c FROM titles WHERE kind = 'show'").get().c,
@@ -70,6 +75,12 @@ app.put('/api/admin/settings', { preHandler: requireAdmin }, async (req) => {
   if (Number(b.scanHours) >= 1 && Number(b.scanHours) <= 168) settings.set('scan_hours', Number(b.scanHours));
   if (typeof b.fingerprint === 'boolean') settings.set('fingerprint', b.fingerprint);
   if (Number.isInteger(Number(b.sessionIdleDays)) && Number(b.sessionIdleDays) >= 1 && Number(b.sessionIdleDays) <= 3650) settings.set('session_idle_days', Number(b.sessionIdleDays));
+  if (typeof b.require2faAdmins === 'boolean') {
+    if (b.require2faAdmins && !req.user.totp_enabled) throw new HttpError(400, 'Zet eerst tweestapsverificatie aan voor je eigen account; anders sluit je jezelf buiten.');
+    settings.set('require_2fa_admins', b.require2faAdmins);
+  }
+  const changed = Object.keys(b).filter((k) => ['serverName', 'scanHours', 'fingerprint', 'sessionIdleDays', 'require2faAdmins'].includes(k));
+  if (changed.length) audit('settings.change', { user: req.user, ip: req.ip, detail: changed.join(', ') });
   return { ok: true };
 });
 
@@ -118,7 +129,8 @@ const rewatch = () => watchLibraries(() => { lastScan = Date.now(); scanAll(); }
 rewatch(); setLibrariesChanged(rewatch);
 setTimeout(() => backupIfDue(), 60_000).unref();
 setInterval(() => backupIfDue(), 3600_000).unref();
-purgeSessions();
+purgeSessions(); purgeAudit();
+setInterval(() => purgeAudit(), 6 * 3600_000).unref();
 setInterval(() => purgeSessions(), 6 * 3600_000).unref();
 
 const stop = async () => { cleanupTranscodes(); await app.close(); process.exit(0); };

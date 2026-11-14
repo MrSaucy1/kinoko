@@ -7,6 +7,7 @@ import { requireAdmin } from './auth.js';
 import { findOrCreateTitle, findOrCreateEpisode, pruneOrphans } from './library.js';
 import { rebuildCollections } from './collections.js';
 import { playLocal, setRemotePlayer } from './stream.js';
+import { audit } from './audit.js';
 import { searchOnline, downloadOnline, setRemoteSubs } from './subtitles.js';
 import { imgUrl } from './metadata.js';
 import { issueTicket } from './stream.js';
@@ -201,6 +202,7 @@ export default async function routes(app) {
     const ins = db.prepare('INSERT INTO peers (name, url, out_key, in_key_hash, created_at) VALUES (?,?,?,?,?)')
       .run(res.name, url, res.key, keyForThem ? sha256(keyForThem) : null, now());
     const peer = db.prepare('SELECT * FROM peers WHERE id = ?').get(ins.lastInsertRowid);
+    audit('peer.link', { user: req.user, ip: req.ip, detail: `${res.name} (${url})` });
     let titles = 0; try { titles = await syncPeer(peer); } catch { /* shown as last_error in the list */ }
     return { ok: true, name: res.name, files: titles, mutual: !!info.mutual };
   });
@@ -214,6 +216,7 @@ export default async function routes(app) {
     const peer = db.prepare('SELECT * FROM peers WHERE id = ?').get(req.params.id);
     if (peer?.out_key) peerFetch(peer, '/api/federation/unlink', { method: 'POST', timeout: 8000 }).catch(() => {});
     removePeer(req.params.id);
+    if (peer) audit('peer.unlink', { user: req.user, ip: req.ip, detail: peer.name });
     return { ok: true };
   });
 
@@ -236,6 +239,7 @@ export default async function routes(app) {
     db.prepare('DELETE FROM peers WHERE url = ?').run(cleanUrl);
     const ins = db.prepare('INSERT INTO peers (name, url, out_key, in_key_hash, created_at) VALUES (?,?,?,?,?)')
       .run(String(name || 'Kinoko').slice(0, 60), cleanUrl, wantBack ? key : null, sha256(keyForThem), now());
+    audit('peer.link', { ip: req.ip, detail: `${String(name || 'Kinoko').slice(0, 60)} (${cleanUrl}) via koppellink` });
     if (wantBack) {
       const peer = db.prepare('SELECT * FROM peers WHERE id = ?').get(ins.lastInsertRowid);
       setTimeout(() => syncPeer(peer).catch(() => {}), 3000);

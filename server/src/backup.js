@@ -6,6 +6,7 @@ import path from 'node:path';
 import { db, settings, now, HttpError } from './db.js';
 import { dataPath } from './config.js';
 import { requireAdmin } from './auth.js';
+import { audit } from './audit.js';
 
 const NAME = /^kinoko-\d{8}-\d{6}\.db$/;
 const dir = () => dataPath('backups');
@@ -45,8 +46,8 @@ export default async function routes(app) {
   app.get('/api/admin/backups', { preHandler: requireAdmin }, async () => ({
     backups: listBackups(), keep: keep(), daily: settings.get('backup_daily', true) !== false, last: settings.get('backup_last', 0),
   }));
-  app.post('/api/admin/backups', { preHandler: requireAdmin }, async () => {
-    try { return { name: createBackup() }; } catch (e) { throw new HttpError(500, `Back-up maken is mislukt: ${e.message}`); }
+  app.post('/api/admin/backups', { preHandler: requireAdmin }, async (req) => {
+    try { const name = createBackup(); audit('backup.create', { user: req.user, ip: req.ip, detail: name }); return { name }; } catch (e) { throw new HttpError(500, `Back-up maken is mislukt: ${e.message}`); }
   });
   app.put('/api/admin/backups', { preHandler: requireAdmin }, async (req) => {
     const b = req.body || {};
@@ -64,6 +65,7 @@ export default async function routes(app) {
     if (!NAME.test(name)) throw new HttpError(400, 'Ongeldige naam.');
     const file = path.join(dir(), name);
     if (!fs.existsSync(file)) throw new HttpError(404, 'Deze back-up bestaat niet (meer).');
+    audit('backup.download', { user: req.user, ip: req.ip, detail: name });
     return reply.header('Content-Type', 'application/octet-stream').header('Content-Disposition', `attachment; filename="${name}"`)
       .header('Content-Length', fs.statSync(file).size).header('Cache-Control', 'no-store').send(fs.createReadStream(file));
   });
