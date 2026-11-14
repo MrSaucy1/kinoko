@@ -21,6 +21,13 @@ SRC="$(cd "$(dirname "${BASH_SOURCE[0]:-.}")/.." 2>/dev/null && pwd || true)"
 [ -f "$SRC/server/package.json" ] || SRC=""
 
 say() { printf '\033[1;35m▸\033[0m %s\n' "$*"; }
+# The repository address with the token for a private fork, if one was given.
+REPO_AUTH="$REPO"
+[ -z "$TOKEN" ] || REPO_AUTH="${REPO/https:\/\//https://x-access-token:$TOKEN@}"
+# Where the root helper is installed from. It must never be a file the kinoko
+# user can write (that user may run the helper as root), so it is not taken
+# from $DIR once that belongs to kinoko.
+HELPER_SRC=""
 [ "$(id -u)" -eq 0 ] || { echo "Voer dit script uit als root."; exit 1; }
 command -v apt-get >/dev/null || { echo "Dit script ondersteunt alleen Debian en Ubuntu."; exit 1; }
 
@@ -53,19 +60,36 @@ if [ -n "$SRC" ] && [ "$SRC" != "$DIR" ]; then
   cp -a "$SRC/." "$DIR/"
   rm -rf "$DIR/server/node_modules" "$DIR/data"
   [ -d "$DIR/.git" ] && git -C "$DIR" -c safe.directory="$DIR" remote set-url origin "$REPO" || true
+  HELPER_SRC="$SRC/install/kinoko-helper"
 elif [ -d "$DIR/.git" ]; then
   say "Bestaande installatie bijwerken…"
   chown -R kinoko:kinoko "$DIR"
   sudo -u kinoko git -C "$DIR" pull --ff-only
+  # This checkout has been writable by kinoko, so fetch the helper of the same
+  # commit straight from the repository, into a directory only root can touch.
+  SHA="$(sudo -u kinoko git -C "$DIR" rev-parse HEAD)"
+  HELPER_TMP="$(mktemp -d)"
+  if GIT_CONFIG_GLOBAL=/dev/null git init -q --bare "$HELPER_TMP/repo" \
+    && GIT_CONFIG_GLOBAL=/dev/null git -C "$HELPER_TMP/repo" fetch -q --depth 1 "$REPO_AUTH" "$SHA" \
+    && GIT_CONFIG_GLOBAL=/dev/null git -C "$HELPER_TMP/repo" show "$SHA:install/kinoko-helper" > "$HELPER_TMP/kinoko-helper"; then
+    HELPER_SRC="$HELPER_TMP/kinoko-helper"
+  else
+    echo "De installatie in $DIR komt niet overeen met $REPO. Verwijder $DIR en voer dit script opnieuw uit (je gegevens in $DATA blijven staan)." >&2
+    exit 1
+  fi
 else
   say "Kinoko ophalen van $REPO…"
-  if [ -n "$TOKEN" ]; then git clone --depth 1 "${REPO/https:\/\//https://x-access-token:$TOKEN@}" "$DIR"; else git clone --depth 1 "$REPO" "$DIR"; fi
+  git clone --depth 1 "$REPO_AUTH" "$DIR"
+  # Still owned by root here: keep a copy of the helper before kinoko gets the checkout.
+  HELPER_TMP="$(mktemp -d)"
+  cp "$DIR/install/kinoko-helper" "$HELPER_TMP/kinoko-helper"
+  HELPER_SRC="$HELPER_TMP/kinoko-helper"
 fi
 chown -R kinoko:kinoko "$DIR"
 chmod 750 "$DIR"
 if [ -n "$TOKEN" ] && [ -d "$DIR/.git" ]; then
   # Stored in the checkout's git config, readable by the kinoko user only.
-  sudo -u kinoko git -C "$DIR" remote set-url origin "${REPO/https:\/\//https://x-access-token:$TOKEN@}"
+  sudo -u kinoko git -C "$DIR" remote set-url origin "$REPO_AUTH"
   chmod 600 "$DIR/.git/config"
 fi
 
@@ -73,11 +97,19 @@ say "Afhankelijkheden installeren…"
 (cd "$DIR/server" && sudo -u kinoko npm ci --omit=dev --no-audit --no-fund >/dev/null)
 
 say "Beheerhulp en service instellen…"
-install -m 755 "$DIR/install/kinoko-helper" /usr/local/bin/kinoko-helper
+# The helper and everything it trusts belong to root; kinoko can only run it.
+install -o root -g root -m 755 "$HELPER_SRC" /usr/local/bin/kinoko-helper
+[ -z "${HELPER_TMP:-}" ] || rm -rf "$HELPER_TMP"
+# The address the helper fetches its own updates from (may hold a token: root only).
+install -d -o root -g root -m 755 /etc/kinoko
+(umask 077; printf '%s\n' "$REPO_AUTH" > /etc/kinoko/repo)
+chown root:root /etc/kinoko/repo
+chmod 600 /etc/kinoko/repo
 cat > /etc/sudoers.d/kinoko <<SUDO
 # The Kinoko server may run its root helper, and nothing else.
 kinoko ALL=(root) NOPASSWD: /usr/local/bin/kinoko-helper
 SUDO
+chown root:root /etc/sudoers.d/kinoko
 chmod 440 /etc/sudoers.d/kinoko
 visudo -cf /etc/sudoers.d/kinoko >/dev/null
 

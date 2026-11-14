@@ -2,10 +2,61 @@
 # Root helper for the Kinoko admin GUI. The server runs as the unprivileged
 # "kinoko" user and may run ONLY this script through sudo (see
 # /etc/sudoers.d/kinoko). Every argument is validated here.
+#
+# Security: this script is the one bridge from "kinoko" to root, so nothing the
+# kinoko user can write may ever be executed or installed as root.
+#  - /opt/kinoko (the checkout, including .git and its config) belongs to
+#    kinoko. Every git/npm command in it therefore runs as kinoko, never as
+#    root: a repository's own config can make git start arbitrary programs.
+#  - "update" refuses a checkout that was tampered with (changed or untracked
+#    files, or commits that are not on the upstream branch).
+#  - The new copy of this helper is NOT taken from that checkout. Root fetches
+#    the same commit again from the repository address in the root-owned file
+#    /etc/kinoko/repo, into a root-only directory, and installs the committed
+#    file from there (git show <commit>:install/kinoko-helper). Someone who
+#    controls the kinoko user can change files and local git history, but
+#    cannot make the real repository serve their version.
+#  - No path or address comes from the environment or from a kinoko-writable file.
 set -euo pipefail
 
-INSTALL_DIR="${KINOKO_DIR:-/opt/kinoko}"
+INSTALL_DIR=/opt/kinoko
+HELPER=/usr/local/bin/kinoko-helper
+REPO_FILE=/etc/kinoko/repo
+DEFAULT_REPO=https://github.com/MrSaucy1/kinoko.git
 cmd="${1:-}"
+
+die() { echo "$*" >&2; exit 1; }
+# Runs a command as the kinoko user, without a login prompt for git.
+as_kinoko() { sudo -u kinoko env GIT_TERMINAL_PROMPT=0 "$@"; }
+# git as root, outside any checkout and ignoring every config file but the system one.
+root_git() { env -u GIT_DIR -u GIT_WORK_TREE GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 git "$@"; }
+
+# Fetches install/kinoko-helper of commit $1 from the trusted repository address
+# and installs it root-owned. Returns non-zero (and leaves the current helper
+# in place) when that commit cannot be fetched from there.
+install_helper_from_repo() {
+  local tmp rc=0
+  tmp="$(mktemp -d)" || return 1            # mode 700, owned by root
+  fetch_helper "$1" "$tmp" || rc=1
+  rm -rf "$tmp"
+  return "$rc"
+}
+fetch_helper() {
+  local sha="$1" tmp="$2" url="$DEFAULT_REPO"
+  if [ -f "$REPO_FILE" ]; then
+    # Only trust the file when root owns it and nobody else can write it.
+    [ "$(stat -c '%u' "$REPO_FILE")" = 0 ] && [ -z "$(find "$REPO_FILE" -perm /022)" ] || return 1
+    url="$(head -n1 "$REPO_FILE")"
+  fi
+  [[ "$url" =~ ^https://[A-Za-z0-9._~:@/%+-]+$ ]] || return 1
+  root_git init -q --bare "$tmp/repo" || return 1
+  root_git -C "$tmp/repo" fetch -q --depth 1 "$url" "$sha" 2>/dev/null || return 1
+  # The committed file, written to a file only root can touch.
+  root_git -C "$tmp/repo" show "$sha:install/kinoko-helper" > "$tmp/kinoko-helper" 2>/dev/null || return 1
+  head -n1 "$tmp/kinoko-helper" | grep -qx '#!/usr/bin/env bash' || return 1
+  bash -n "$tmp/kinoko-helper" || return 1
+  install -o root -g root -m 755 "$tmp/kinoko-helper" "$HELPER"
+}
 
 need_port() { [[ "${1:-}" =~ ^[0-9]{2,5}$ ]] || { echo "Ongeldige poort." >&2; exit 2; }; }
 
@@ -45,15 +96,38 @@ case "$cmd" in
     ;;
   update)
     cd "$INSTALL_DIR"
-    if ! sudo -u kinoko env GIT_TERMINAL_PROMPT=0 git pull --ff-only 2>/tmp/kinoko-update.err; then
-      echo "Bijwerken lukt niet: de repository is niet bereikbaar of de installatie wijkt af van de laatste versie. Voer install.sh opnieuw uit." >&2
-      exit 1
+    [ -d .git ] || die "Bijwerken lukt niet: deze installatie is geen git-checkout. Voer install.sh opnieuw uit."
+
+    # 1. Refuse a checkout that differs from what was installed.
+    if ! dirty="$(as_kinoko git status --porcelain 2>/dev/null)"; then
+      die "Bijwerken lukt niet: de installatiemap is niet leesbaar als git-checkout. Voer install.sh opnieuw uit als root."
     fi
-    (cd server && sudo -u kinoko npm ci --omit=dev --no-audit --no-fund)
-    install -m 755 install/kinoko-helper /usr/local/bin/kinoko-helper
+    if [ -n "$dirty" ]; then
+      die "Bijwerken geweigerd: in $INSTALL_DIR staan gewijzigde of onbekende bestanden. Kinoko werkt alleen een ongewijzigde installatie bij. Kijk met 'git -C $INSTALL_DIR status' wat er afwijkt, of voer install.sh opnieuw uit als root."
+    fi
+    upstream="$(as_kinoko git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null)" \
+      || die "Bijwerken geweigerd: de installatie volgt geen branch van de repository. Voer install.sh opnieuw uit als root."
+    as_kinoko git fetch --quiet 2>/dev/null \
+      || die "Bijwerken lukt niet: de repository is niet bereikbaar. Controleer de internetverbinding van de server en probeer het opnieuw."
+    if ! as_kinoko git merge-base --is-ancestor HEAD "$upstream" 2>/dev/null; then
+      die "Bijwerken geweigerd: de installatie bevat commits die niet in de repository staan. Voer install.sh opnieuw uit als root."
+    fi
+
+    # 2. Update the code; everything here runs as kinoko.
+    as_kinoko git merge --quiet --ff-only "$upstream" 2>/dev/null \
+      || die "Bijwerken lukt niet: de nieuwe versie kan niet worden overgenomen. Voer install.sh opnieuw uit als root."
+    (cd server && as_kinoko npm ci --omit=dev --no-audit --no-fund)
+
+    # 3. Renew this helper from the repository itself, not from the checkout.
+    sha="$(as_kinoko git rev-parse HEAD)"
+    [[ "$sha" =~ ^[0-9a-f]{40,64}$ ]] || die "Bijwerken lukt niet: de versie van de installatie is niet te bepalen."
+    if ! install_helper_from_repo "$sha"; then
+      echo "Let op: de beheerhulp is niet vernieuwd, omdat deze versie niet rechtstreeks uit de repository te halen was. De rest is wel bijgewerkt. Voer install.sh opnieuw uit als root om ook de beheerhulp te vernieuwen."
+    fi
+
     # Restart a moment later so the admin GUI still receives this output.
     systemd-run --on-active=2 systemctl restart kinoko >/dev/null 2>&1
-    git -C "$INSTALL_DIR" log -1 --format='Bijgewerkt naar %h (%s)'
+    as_kinoko git log -1 --format='Bijgewerkt naar %h (%s)'
     ;;
   *)
     echo "Onbekende opdracht." >&2; exit 2
