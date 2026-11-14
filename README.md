@@ -28,6 +28,7 @@ install/  Proxmox-helperscript, installer en de root-beheerhulp
 | **Downloads** | In de mobiele app, hervatbaar, offline af te spelen. |
 | **Watch Night** | Thema op basis van seizoen/feestdag en drie gedobbelde films. |
 | **Live tv** | Xtream Codes of M3U, één keer ingesteld door de beheerder. |
+| **Apparaten** | Per account zie je waar je bent ingelogd en log je een apparaat uit; ongebruikte sessies verlopen vanzelf. |
 | **Externe toegang** | Tailscale, Cloudflare Tunnel of eigen domein, in te stellen vanuit het beheer. |
 
 ## Installeren op Proxmox
