@@ -35,6 +35,9 @@ install/  Proxmox-helperscript, installer en de root-beheerhulp
 | **Limiet per gebruiker** | De beheerder stelt per account een maximale streamkwaliteit in. |
 | **Back-ups** | Dagelijks een kopie van de database; in het beheer te maken en te downloaden. |
 | **Meldingen** | Webhooks (Discord of algemene JSON) bij een nieuwe titel, een kijker, een afgeronde scan of een fout. |
+| **Tweestapsverificatie** | Optioneel per account (TOTP, elke authenticator-app), met herstelcodes. De beheerder kan het verplichten voor beheerders. |
+| **Rechten per bibliotheek** | Per gebruiker kiest de beheerder welke bibliotheken (en gekoppelde servers) zichtbaar zijn; de rest bestaat voor die gebruiker niet. |
+| **Logboek** | Inlogpogingen, wijzigingen aan gebruikers en instellingen, koppelingen en updates; te filteren in het beheer. |
 | **Apparaten** | Per account zie je waar je bent ingelogd en log je een apparaat uit; ongebruikte sessies verlopen vanzelf. |
 | **Externe toegang** | Tailscale, Cloudflare Tunnel of eigen domein, in te stellen vanuit het beheer. |
 
@@ -85,6 +88,29 @@ cd app && flutter pub get && flutter analyze && flutter test
 
 Instellingen via omgevingsvariabelen: `KINOKO_PORT`, `KINOKO_DATA`,
 `KINOKO_FFMPEG`, `KINOKO_FFPROBE`.
+
+## fail2ban / CrowdSec
+
+Bij elke mislukte inlogpoging schrijft Kinoko precies één regel naar het
+logboek van de service (`journalctl -u kinoko`):
+
+```
+kinoko: auth failure ip=203.0.113.7 reason=password
+```
+
+`reason` is `password`, `totp` of `throttled`. In de regel staat niets wat de
+bezoeker zelf heeft ingetypt. Een kant-en-klaar filter en een voorbeeld-jail
+staan in `install/fail2ban/`:
+
+```bash
+cp install/fail2ban/kinoko.conf  /etc/fail2ban/filter.d/kinoko.conf
+cp install/fail2ban/kinoko.local /etc/fail2ban/jail.d/kinoko.local
+systemctl restart fail2ban
+```
+
+Staat Kinoko achter een reverse proxy op een andere machine, dan gelooft Kinoko
+het doorgegeven adres alleen als die proxy op het lokale netwerk staat. Voor een
+proxy elders: zet `KINOKO_TRUST_PROXY` op het adres van die proxy.
 
 ## Goed om te weten
 

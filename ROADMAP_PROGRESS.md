@@ -63,3 +63,23 @@ Keuzes:
 Open / niet getest:
 - App: timing, serievoorkeuren, extra's en het aanbod "Verder kijken" zijn alleen met `flutter analyze` gecontroleerd, niet op een toestel.
 - Audiotaal bij direct afspelen in de browser kan niet zonder omzetten; de browser schakelt dan naar de hoogste omgezette kwaliteit (bestaand gedrag).
+
+## Fase 2 — Beveiliging & rechten
+
+- Status: **klaar**
+- Branch: `feat/security-features` (vanaf `feat/quick-wins`)
+- PR: https://github.com/MrSaucy1/kinoko/compare/feat/quick-wins...feat/security-features?expand=1 — tekst in `docs/pr/fase-2.md`
+
+Gedaan: 2FA (TOTP + herstelcodes, verplicht te stellen voor beheerders), audit-log, fail2ban-regel + filter, rechten per bibliotheek. Migratie 2.
+
+Keuzes:
+- TOTP zelf geïmplementeerd (60 regels), geen dependency.
+- `trustProxy` beperkt tot loopback en privé-adressen; te overschrijven met `KINOKO_TRUST_PROXY`. Dit verandert bestaand gedrag voor wie een proxy buiten het eigen netwerk gebruikt.
+- Rechten: `access.js` is de ene plek; fase 3 (kindermodus) en fase 6 (muziek) breiden daar de scope uit.
+- Federatie-catalogus valt niet onder gebruikersrechten (server-naar-server).
+- Posters blijven zonder inloggen opvraagbaar (bestaand ontwerp).
+
+Open / niet getest:
+- De regel "zet eerst je eigen 2FA aan voordat je het verplicht" zit in `index.js` en heeft geen eigen test.
+- 2FA in de app (inloggen met code, instellen in het profiel) is niet op een toestel geprobeerd. De app toont de sleutel als tekst, geen QR-code.
+- fail2ban zelf is hier niet geïnstalleerd; het filter is alleen tegen de regel-opmaak getest.
