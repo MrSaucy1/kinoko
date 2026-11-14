@@ -13,7 +13,9 @@ import 'screens/home.dart';
 import 'screens/live.dart';
 import 'screens/onboarding.dart';
 import 'screens/profile.dart';
+import 'screens/player.dart';
 import 'services/downloads.dart';
+import 'services/events.dart';
 import 'widgets/common.dart';
 
 /// Shared entry point; `main.dart` (phone) and `main_tv.dart` (TV) call this.
@@ -41,10 +43,38 @@ class KinokoApp extends StatefulWidget {
 
 class _KinokoAppState extends State<KinokoApp> {
   StreamSubscription<Uri>? _links;
+  StreamSubscription<Json>? _events;
+  final _messenger = GlobalKey<ScaffoldMessengerState>();
+
+  /// "Paused on another device": offer to pick it up here.
+  void _onEvent(Json m) {
+    if (m['t'] != 'resume' || PlayerScreen.open > 0) return;
+    final ctx = _navigator.currentContext;
+    if (ctx == null || !api.signedIn) return;
+    final where = (m['episodeId'] ?? 0) != 0 ? ' · S${m['season']} A${m['episode']}' : '';
+    _messenger.currentState
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        duration: const Duration(seconds: 20),
+        content: Text('Gepauzeerd op een ander apparaat: ${m['title']}$where'),
+        action: SnackBarAction(
+          label: 'Verder kijken',
+          onPressed: () {
+            final c = _navigator.currentContext;
+            if (c == null) return;
+            final ep = (m['episodeId'] as num?)?.toInt() ?? 0;
+            openPlayer(c, PlayRequest(titleId: (m['titleId'] as num).toInt(), episodeId: ep == 0 ? null : ep, resume: (m['position'] as num?)?.toDouble()));
+          },
+        ),
+      ));
+  }
 
   @override
   void initState() {
     super.initState();
+    api.addListener(ServerEvents.instance.sync);
+    ServerEvents.instance.sync();
+    _events = ServerEvents.instance.stream.listen(_onEvent);
     // kinoko://w/CODE — an invite opened from the web page or a chat message.
     try {
       _links = AppLinks().uriLinkStream.listen(_onLink, onError: (_) {});
@@ -63,6 +93,8 @@ class _KinokoAppState extends State<KinokoApp> {
   @override
   void dispose() {
     _links?.cancel();
+    _events?.cancel();
+    api.removeListener(ServerEvents.instance.sync);
     super.dispose();
   }
 
@@ -71,6 +103,7 @@ class _KinokoAppState extends State<KinokoApp> {
     return MaterialApp(
       title: 'Kinoko',
       navigatorKey: _navigator,
+      scaffoldMessengerKey: _messenger,
       debugShowCheckedModeBanner: false,
       theme: K.theme(tv: Device.isTv),
       // TV remotes send "select"; map it to activate everywhere.

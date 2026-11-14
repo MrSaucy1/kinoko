@@ -43,6 +43,7 @@ class _DetailScreenState extends State<DetailScreen> {
   Future<void> _download(Json d, Json version, {Json? episode}) async {
     try {
       final play = await api.post('/api/play', {'fileId': version['fileId'], 'quality': 'original'});
+      if (play['download'] == null) throw ApiException(403, 'Het origineel downloaden is voor jouw account uitgezet door de beheerder.');
       await Downloads.instance.start(play: play, meta: {
         'titleId': d['id'],
         'episodeId': episode?['id'] ?? 0,
@@ -93,6 +94,7 @@ class _DetailScreenState extends State<DetailScreen> {
     final rating = d['rating'] as num?;
     final cast = listOf(d['cast']);
     final similar = listOf(d['similar']);
+    final extras = listOf(d['extras']);
     final collections = listOf(d['collections']);
     final curVersion = versions.where((v) => v['fileId'] == _fileId).firstOrNull ?? versions.firstOrNull;
 
@@ -238,6 +240,33 @@ class _DetailScreenState extends State<DetailScreen> {
             ),
           ),
         ),
+      if (extras.isNotEmpty) ...[
+        Padding(padding: EdgeInsets.fromLTRB(pad, 22, pad, 8), child: const Text("Extra's", style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800))),
+        for (final x in extras)
+          Padding(
+            padding: EdgeInsets.fromLTRB(pad, 0, pad, 8),
+            child: Tappable(
+              radius: 12,
+              focusScale: 1.02,
+              onTap: () => openPlayer(context, PlayRequest(extra: x)),
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(color: K.surface, borderRadius: BorderRadius.circular(12), border: Border.all(color: K.line)),
+                child: Row(children: [
+                  const Icon(Icons.play_circle_fill_rounded, color: K.lilac),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text((x['name'] ?? '').toString(), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)),
+                      Text((x['label'] ?? '').toString(), style: const TextStyle(color: K.muted, fontSize: 13)),
+                    ]),
+                  ),
+                  if (numOf(x['duration']) > 0) Text('${(numOf(x['duration']) / 60).ceil()} min', style: const TextStyle(color: K.faint, fontSize: 13)),
+                ]),
+              ),
+            ),
+          ),
+      ],
       if (similar.isNotEmpty)
         Shelf(title: 'Meer zoals dit', children: [
           for (final c in similar) PosterCard(c, onTap: () => Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => DetailScreen((c['id'] as num).toInt())))),

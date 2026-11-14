@@ -24,7 +24,10 @@ class PlayRequest {
   final DownloadItem? offline;
   final Json? channel;
 
-  const PlayRequest({this.titleId, this.episodeId, this.fileId, this.quality = 'original', this.resume, this.roomCode, this.guest, this.offline, this.channel});
+  /// Bonus material (trailer, featurette) of a title: plays on its own, no progress kept.
+  final Json? extra;
+
+  const PlayRequest({this.titleId, this.episodeId, this.fileId, this.quality = 'original', this.resume, this.roomCode, this.guest, this.offline, this.channel, this.extra});
 }
 
 Future<void> openPlayer(BuildContext context, PlayRequest req) {
@@ -36,6 +39,9 @@ Future<void> openPlayer(BuildContext context, PlayRequest req) {
 }
 
 class PlayerScreen extends StatefulWidget {
+  /// How many players are on screen; other parts of the app stay quiet meanwhile.
+  static int open = 0;
+
   final PlayRequest req;
   const PlayerScreen(this.req, {super.key});
   @override
@@ -59,6 +65,9 @@ class _PlayerScreenState extends State<PlayerScreen> with TickerProviderStateMix
   int? _fileId;
   late String _quality = widget.req.quality;
   int _audio = 0;
+  bool _audioChosen = false;
+  int _subOffsetMs = 0;
+  Timer? _offsetSave;
   Json? _play;
   String _title = '';
   String _subtitle = '';
@@ -90,6 +99,8 @@ class _PlayerScreenState extends State<PlayerScreen> with TickerProviderStateMix
   final _reactions = <_Reaction>[];
 
   bool get _isLive => widget.req.channel != null;
+  bool get _isExtra => widget.req.extra != null;
+  bool get _isShow => _detail?['kind'] == 'show' && !_isGuest && !_isOffline;
   bool get _isOffline => widget.req.offline != null;
   bool get _isGuest => widget.req.guest != null;
   Json get _markers => (_play?['markers'] as Json?) ?? (widget.req.offline?.meta['markers'] as Json?) ?? const {};
@@ -97,6 +108,7 @@ class _PlayerScreenState extends State<PlayerScreen> with TickerProviderStateMix
   @override
   void initState() {
     super.initState();
+    PlayerScreen.open++;
     if (!Device.isTv) {
       SystemChrome.setPreferredOrientations([DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]);
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
@@ -128,7 +140,9 @@ class _PlayerScreenState extends State<PlayerScreen> with TickerProviderStateMix
 
   @override
   void dispose() {
+    PlayerScreen.open--;
     _report();
+    _offsetSave?.cancel();
     _hideTimer?.cancel();
     _progressTimer?.cancel();
     _toastTimer?.cancel();
@@ -165,6 +179,12 @@ class _PlayerScreenState extends State<PlayerScreen> with TickerProviderStateMix
           if (_pos == Duration.zero) _liveFallback();
         });
         _loadEpg();
+      } else if (_isExtra) {
+        _title = (req.extra!['name'] ?? '').toString();
+        _subtitle = (req.extra!['label'] ?? '').toString();
+        final play = await api.post('/api/extras/${req.extra!['id']}/play', const {'caps': 'any'});
+        _play = play;
+        await _player.open(Media(api.abs(play['url'])!));
       } else if (_isOffline) {
         final d = req.offline!;
         _title = (d.meta['title'] ?? '').toString();
@@ -259,6 +279,15 @@ class _PlayerScreenState extends State<PlayerScreen> with TickerProviderStateMix
     _countdown.reset();
     final old = _play?['sessionId'];
     if (old != null && _room == null) api.delete('/api/hls/$old').catchError((_) => <String, dynamic>{});
+    // A series remembers the audio and subtitle language chosen earlier.
+    final pref = _isShow ? _detail!['prefs'] as Json? : null;
+    final prefAudio = (pref?['audioLang'] ?? '').toString();
+    final prefSub = (pref?['subLang'] ?? '').toString();
+    if (!_audioChosen && prefAudio.isNotEmpty && _quality != 'original') {
+      final cur = _versions.where((v) => v['fileId'] == _fileId).firstOrNull;
+      final a = listOf(cur?['audio']).where((x) => x['lang'] == prefAudio).firstOrNull;
+      if (a != null) _audio = (a['index'] as num).toInt();
+    }
     final body = {'fileId': _fileId, 'quality': _quality, 'audio': _audio, 'caps': 'any'};
     final req = widget.req;
     final play = _room != null || req.roomCode != null
@@ -267,8 +296,11 @@ class _PlayerScreenState extends State<PlayerScreen> with TickerProviderStateMix
     _play = play;
     _fileId = (play['fileId'] as num).toInt();
     await _player.open(Media(api.abs(play['url'])!, start: _resumeAt(position)), play: autoplay);
-    // Keep the viewer's subtitle language across episodes.
-    final want = api.prefs.getString('sub_lang') ?? '';
+    _subOffsetMs = (play['subOffsetMs'] as num?)?.toInt() ?? 0;
+    _applySubOffset();
+    if (!_audioChosen && prefAudio.isNotEmpty && play['mode'] == 'direct') _pickAudioLanguage(prefAudio);
+    // Keep the viewer's subtitle language across episodes; a choice made for this series wins.
+    final want = prefSub.isNotEmpty ? (prefSub == 'off' ? '' : prefSub) : (api.prefs.getString('sub_lang') ?? '');
     if (want.isNotEmpty) {
       final match = listOf(play['subtitles']).where((s) => s['lang'] == want).firstOrNull;
       if (match != null) _setServerSub(match, remember: false);
@@ -360,8 +392,42 @@ class _PlayerScreenState extends State<PlayerScreen> with TickerProviderStateMix
     }
   }
 
-  void _report({bool finished = false}) {
-    if (_isLive || _isGuest || _pos == Duration.zero) return;
+  /// mpv shifts subtitles itself; positive = later.
+  void _applySubOffset() {
+    final p = _player.platform;
+    if (p is NativePlayer) p.setProperty('sub-delay', (_subOffsetMs / 1000).toStringAsFixed(3)).catchError((_) {});
+  }
+
+  void _shiftSubs(int ms) {
+    _subOffsetMs = ms == 0 ? 0 : (_subOffsetMs + ms).clamp(-600000, 600000);
+    _applySubOffset();
+    _offsetSave?.cancel();
+    if (_fileId == null || _isGuest || _isOffline || _isLive || _isExtra) return;
+    final id = _fileId, value = _subOffsetMs;
+    _offsetSave = Timer(const Duration(milliseconds: 800), () => api.put('/api/files/$id/sub-offset', {'offsetMs': value}).catchError((_) => <String, dynamic>{}));
+  }
+
+  /// Direct play: the file's own tracks appear a moment after opening.
+  Future<void> _pickAudioLanguage(String lang) async {
+    try {
+      final tracks = await _player.stream.tracks.firstWhere((t) => t.audio.where((a) => a.id != 'auto' && a.id != 'no').isNotEmpty).timeout(const Duration(seconds: 6));
+      final match = tracks.audio.where((a) => (a.language ?? '').toLowerCase().startsWith(lang) || _lang3[(a.language ?? '').toLowerCase()] == lang).firstOrNull;
+      if (match != null && !_audioChosen) await _player.setAudioTrack(match);
+    } catch (_) {
+      // No such track: keep the default.
+    }
+  }
+
+  static const _lang3 = {'nld': 'nl', 'dut': 'nl', 'eng': 'en', 'ger': 'de', 'deu': 'de', 'fre': 'fr', 'fra': 'fr', 'spa': 'es', 'ita': 'it', 'jpn': 'ja', 'kor': 'ko'};
+
+  void _savePref(Json body) {
+    if (!_isShow) return;
+    _detail!['prefs'] = {...?(_detail!['prefs'] as Json?), ...body};
+    api.put('/api/titles/${_detail!['id']}/prefs', body).catchError((_) => <String, dynamic>{});
+  }
+
+  void _report({bool finished = false, bool paused = false}) {
+    if (_isLive || _isExtra || _isGuest || _pos == Duration.zero) return;
     final titleId = _detail?['id'] ?? widget.req.offline?.meta['titleId'];
     if (titleId == null) return;
     final episodeId = _episode?['id'] ?? widget.req.offline?.meta['episodeId'] ?? 0;
@@ -371,6 +437,7 @@ class _PlayerScreenState extends State<PlayerScreen> with TickerProviderStateMix
       'position': _pos.inMilliseconds / 1000,
       'duration': _dur.inMilliseconds / 1000,
       if (finished) 'watched': true,
+      if (paused && _room == null && !_isOffline) 'paused': true,
     }).catchError((_) => <String, dynamic>{}); // offline viewing: nothing to sync to
   }
 
@@ -394,6 +461,7 @@ class _PlayerScreenState extends State<PlayerScreen> with TickerProviderStateMix
     if (_playing) {
       _player.pause();
       _room?.pause(_seconds);
+      _report(paused: true);
     } else {
       _player.play();
       _room?.play(_seconds);
@@ -512,6 +580,7 @@ class _PlayerScreenState extends State<PlayerScreen> with TickerProviderStateMix
             _player.setSubtitleTrack(SubtitleTrack.no());
             _activeSubLabel = null;
             api.prefs.setString('sub_lang', '');
+            _savePref({'subLang': 'off'});
           }),
           if (embedded.isNotEmpty) _heading('In het bestand'),
           for (final t in embedded)
@@ -519,9 +588,31 @@ class _PlayerScreenState extends State<PlayerScreen> with TickerProviderStateMix
               _player.setSubtitleTrack(t);
               _activeSubLabel = null;
               if (t.language != null) api.prefs.setString('sub_lang', t.language!.length > 2 ? t.language!.substring(0, 2) : t.language!);
+              final l = (t.language ?? '').toLowerCase();
+              if (l.isNotEmpty) _savePref({'subLang': _lang3[l] ?? (l.length > 2 ? l.substring(0, 2) : l)});
             }),
           if (server.isNotEmpty) _heading('Van de server'),
-          for (final s in server) _option(ctx, s['label'].toString(), selected: _activeSubLabel == s['label'], onTap: () => setState(() => _setServerSub(s))),
+          for (final s in server)
+            _option(ctx, s['label'].toString(), selected: _activeSubLabel == s['label'], onTap: () {
+              setState(() => _setServerSub(s));
+              _savePref({'subLang': (s['lang'] ?? '').toString()});
+            }),
+          if (!_isLive) ...[
+            _heading('Timing'),
+            StatefulBuilder(
+              builder: (ctx, set) => Padding(
+                padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+                child: Row(children: [
+                  KButton('−0,1 s', onTap: () => set(() => _shiftSubs(-100))),
+                  Expanded(child: Text(_subOffsetMs == 0 ? 'Gelijk' : '${_subOffsetMs > 0 ? '+' : '−'}${(_subOffsetMs.abs() / 1000).toStringAsFixed(1).replaceAll('.', ',')} s', textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.w700))),
+                  KButton('+0,1 s', onTap: () => set(() => _shiftSubs(100))),
+                  const SizedBox(width: 8),
+                  KButton('Herstel', onTap: _subOffsetMs == 0 ? null : () => set(() => _shiftSubs(0))),
+                ]),
+              ),
+            ),
+            const Padding(padding: EdgeInsets.fromLTRB(12, 2, 12, 0), child: Text('Komen de ondertitels te vroeg? Kies +. Te laat? Kies −.', style: TextStyle(color: K.faint, fontSize: 12.5))),
+          ],
           if (!_isOffline && !_isLive) ...[
             _heading('Meer'),
             _option(ctx, 'Online zoeken (Nederlands & Engels)', icon: Icons.travel_explore_rounded, onTap: _searchSubtitles),
@@ -584,12 +675,20 @@ class _PlayerScreenState extends State<PlayerScreen> with TickerProviderStateMix
           if (audioTracks.length > 1) ...[
             _heading('Audio'),
             for (final t in audioTracks)
-              _option(ctx, [t.title, t.language].where((x) => x != null && x.isNotEmpty).join(' · ').ifEmpty('Spoor ${t.id}'), selected: _player.state.track.audio.id == t.id, onTap: () => _player.setAudioTrack(t)),
+              _option(ctx, [t.title, t.language].where((x) => x != null && x.isNotEmpty).join(' · ').ifEmpty('Spoor ${t.id}'), selected: _player.state.track.audio.id == t.id, onTap: () {
+                _audioChosen = true;
+                _player.setAudioTrack(t);
+                final l = (t.language ?? '').toLowerCase();
+                _savePref({'audioLang': l.isEmpty ? '' : (_lang3[l] ?? (l.length > 2 ? l.substring(0, 2) : l))});
+              }),
           ] else if (!direct && cur != null && listOf(cur['audio']).length > 1) ...[
             _heading('Audio'),
             for (final a in listOf(cur['audio']))
               _option(ctx, '${(a['lang'] ?? 'und').toString().toUpperCase()} · ${(a['codec'] ?? '').toString().toUpperCase()}', selected: a['index'] == _audio, onTap: () {
                 _audio = (a['index'] as num).toInt();
+                _audioChosen = true;
+                final l = (a['lang'] ?? '').toString();
+                _savePref({'audioLang': l == 'und' ? '' : l});
                 _reload();
               }),
           ],
