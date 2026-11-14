@@ -80,6 +80,7 @@ Instellingen via omgevingsvariabelen: `KINOKO_PORT`, `KINOKO_DATA`,
 
 ## Goed om te weten
 
+- Een apparaat dat 90 dagen niet is gebruikt, wordt vanzelf uitgelogd (aan te passen in Beheer → Overzicht). Onder Apparaten zie je waar je bent ingelogd en log je een apparaat uit.
 - Posters en afbeeldingen zijn zonder inloggen op te vragen; al het andere vraagt een account, een gast-token of een tijdelijke afspeellink.
 - Streams van een gekoppelde server lopen via je eigen server.
 - HDR-naar-SDR-tonemapping bij transcoderen zit er nog niet in.
