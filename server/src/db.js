@@ -266,6 +266,33 @@ export const MIGRATIONS = [
     `);
     addColumn(d, 'users', 'max_quality', "TEXT NOT NULL DEFAULT ''");   // '' = no limit, else a key of QUALITIES
   },
+  // 2 — fase 2: two-factor sign-in, audit log, per-user library access.
+  (d) => {
+    addColumn(d, 'users', 'totp_secret', 'TEXT');
+    addColumn(d, 'users', 'totp_enabled', 'INTEGER NOT NULL DEFAULT 0');
+    addColumn(d, 'users', 'totp_last', 'INTEGER NOT NULL DEFAULT 0');        // last accepted time step (no code twice)
+    addColumn(d, 'users', 'recovery_codes', "TEXT NOT NULL DEFAULT '[]'");   // sha256 hashes
+    addColumn(d, 'users', 'all_libraries', 'INTEGER NOT NULL DEFAULT 1');    // 0 = only what library_access lists
+    addColumn(d, 'users', 'allow_peers', 'INTEGER NOT NULL DEFAULT 1');      // content from linked servers
+    d.exec(`
+      CREATE TABLE IF NOT EXISTS library_access (
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        library_id INTEGER NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
+        PRIMARY KEY (user_id, library_id)
+      );
+      CREATE TABLE IF NOT EXISTS audit_log (
+        id INTEGER PRIMARY KEY,
+        at INTEGER NOT NULL,
+        user_id INTEGER,
+        user_name TEXT NOT NULL DEFAULT '',
+        ip TEXT NOT NULL DEFAULT '',
+        action TEXT NOT NULL,
+        detail TEXT NOT NULL DEFAULT ''
+      );
+      CREATE INDEX IF NOT EXISTS audit_at ON audit_log(at);
+      CREATE INDEX IF NOT EXISTS audit_action ON audit_log(action, id);
+    `);
+  },
 ];
 
 export function migrate(database = db, steps = MIGRATIONS) {
