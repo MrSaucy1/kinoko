@@ -113,3 +113,93 @@ test('iptv categories are grouped per country', async () => {
   const groups = groupCategories([{ name: 'Sport', count: 2 }, { name: 'NL | Sport', count: 5 }, { name: 'NL | Kids', count: 3 }]);
   assert.deepEqual(groups.map((g) => [g.name, g.count]), [['Nederland', 8], ['Overig', 2]]);
 });
+
+// ---- sessions ---------------------------------------------------------------
+const { default: Fastify } = await import('fastify');
+const { default: authRoutes, createUser, createSession, userFromToken, purgeSessions, sessionId } = await import('../src/auth.js');
+const { db, settings, now, HttpError } = await import('../src/db.js');
+
+async function authApp() {
+  const app = Fastify();
+  app.setErrorHandler((err, req, reply) => reply.code(err instanceof HttpError ? err.status : 500).send({ error: err.message }));
+  await app.register(authRoutes);
+  return app;
+}
+const bearer = (token) => ({ authorization: `Bearer ${token}` });
+const age = (token, days) => db.prepare('UPDATE sessions SET last_seen = ? WHERE token = ?').run(now() - days * 86400, token);
+
+test('an idle session is refused and removed; the limit is a setting', () => {
+  const id = createUser({ name: 'Verlopen', password: 'geheim123' });
+  const fresh = createSession(id, 'Telefoon'), stale = createSession(id, 'Oude tv'), swept = createSession(id, 'Tablet');
+  age(stale, 91); age(swept, 200); age(fresh, 89);
+  assert.equal(userFromToken(fresh).id, id);
+  assert.equal(userFromToken(stale), null);
+  assert.equal(db.prepare('SELECT COUNT(*) c FROM sessions WHERE token = ?').get(stale).c, 0);
+  assert.equal(purgeSessions(), 1);
+  assert.equal(db.prepare('SELECT COUNT(*) c FROM sessions WHERE token = ?').get(swept).c, 0);
+
+  settings.set('session_idle_days', 7);
+  try {
+    const week = createSession(id, 'Laptop'); age(week, 8);
+    assert.equal(userFromToken(week), null);
+  } finally { settings.set('session_idle_days', 90); }
+});
+
+test('session endpoints list own sessions without leaking a token', async () => {
+  const app = await authApp();
+  const me = createUser({ name: 'Lijst', password: 'geheim123' }), other = createUser({ name: 'Buur', password: 'geheim123' });
+  const mine = createSession(me, 'Web'), second = createSession(me, 'Android TV'), theirs = createSession(other, 'Web');
+  const r = await app.inject({ method: 'GET', url: '/api/auth/sessions', headers: bearer(mine) });
+  assert.equal(r.statusCode, 200);
+  for (const t of [mine, second, theirs]) assert.ok(!r.body.includes(t), 'response contains a session token');
+  const { sessions } = r.json();
+  assert.deepEqual(sessions.map((s) => s.device).sort(), ['Android TV', 'Web']);
+  assert.deepEqual(Object.keys(sessions[0]).sort(), ['created_at', 'current', 'device', 'id', 'last_seen']);
+  assert.equal(sessions.find((s) => s.current).id, sessionId(mine));
+  assert.equal((await app.inject({ method: 'GET', url: '/api/auth/sessions' })).statusCode, 401);
+  await app.close();
+});
+
+test('a session can be revoked, but only by its owner', async () => {
+  const app = await authApp();
+  const me = createUser({ name: 'Intrekker', password: 'geheim123' }), other = createUser({ name: 'Vreemde', password: 'geheim123' });
+  const a = createSession(me, 'A'), b = createSession(me, 'B'), c = createSession(me, 'C'), theirs = createSession(other, 'X');
+
+  const foreign = await app.inject({ method: 'DELETE', url: `/api/auth/sessions/${sessionId(theirs)}`, headers: bearer(a) });
+  assert.equal(foreign.statusCode, 404);
+  assert.ok(userFromToken(theirs));
+
+  assert.equal((await app.inject({ method: 'DELETE', url: `/api/auth/sessions/${sessionId(b)}`, headers: bearer(a) })).statusCode, 200);
+  assert.equal(userFromToken(b), null);
+  assert.equal((await app.inject({ method: 'GET', url: '/api/auth/me', headers: bearer(b) })).statusCode, 401);
+
+  const rest = await app.inject({ method: 'POST', url: '/api/auth/sessions/revoke-others', headers: bearer(a) });
+  assert.equal(rest.json().revoked, 1);
+  assert.equal(userFromToken(c), null);
+  assert.ok(userFromToken(a));
+  assert.ok(userFromToken(theirs));
+  await app.close();
+});
+
+test('changing the password signs out every other session', async () => {
+  const app = await authApp();
+  const me = createUser({ name: 'Wisselaar', password: 'geheim123' });
+  const here = createSession(me, 'Web'), there = createSession(me, 'Android');
+  const bad = await app.inject({ method: 'POST', url: '/api/auth/password', headers: bearer(here), payload: { current: 'fout', next: 'nieuw12345' } });
+  assert.equal(bad.statusCode, 403);
+  assert.ok(userFromToken(there));
+  const ok = await app.inject({ method: 'POST', url: '/api/auth/password', headers: bearer(here), payload: { current: 'geheim123', next: 'nieuw12345' } });
+  assert.equal(ok.statusCode, 200);
+  assert.ok(userFromToken(here));
+  assert.equal(userFromToken(there), null);
+  await app.close();
+});
+
+test('deleting a user removes their sessions', () => {
+  assert.equal(db.pragma('foreign_keys', { simple: true }), 1);
+  const id = createUser({ name: 'Weg', password: 'geheim123' });
+  const t = createSession(id, 'Web');
+  db.prepare('DELETE FROM users WHERE id = ?').run(id);
+  assert.equal(userFromToken(t), null);
+  assert.equal(db.prepare('SELECT COUNT(*) c FROM sessions WHERE token = ?').get(t).c, 0);
+});

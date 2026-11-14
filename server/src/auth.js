@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { db, now, randomToken, HttpError, settings } from './db.js';
+import { db, now, randomToken, sha256, HttpError, settings } from './db.js';
 
 const AVATARS = ['violet', 'orchid', 'plum', 'lilac', 'grape', 'iris'];
 
@@ -62,11 +62,43 @@ export function login(name, password, device, ip) {
 
 const sessionStmt = db.prepare('SELECT u.*, s.last_seen FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?');
 const touchStmt = db.prepare('UPDATE sessions SET last_seen = ? WHERE token = ?');
+const dropStmt = db.prepare('DELETE FROM sessions WHERE token = ?');
+
+/** Seconds a session may stay unused before it stops working (setting `session_idle_days`). */
+export function sessionIdleSeconds() {
+  const days = Number(settings.get('session_idle_days', 90));
+  return (days >= 1 && days <= 3650 ? days : 90) * 86400;
+}
+
+/** Removes every session that has been idle for too long. */
+export const purgeSessions = () => db.prepare('DELETE FROM sessions WHERE last_seen < ?').run(now() - sessionIdleSeconds()).changes;
+
+/** What the client sees instead of the token: enough to tell sessions apart, useless for signing in. */
+export const sessionId = (token) => sha256(token).slice(0, 12);
+
+export function listSessions(userId, currentToken) {
+  return db.prepare('SELECT token, device, created_at, last_seen FROM sessions WHERE user_id = ? ORDER BY last_seen DESC').all(userId)
+    .filter((s) => now() - s.last_seen <= sessionIdleSeconds())
+    .map((s) => ({ id: sessionId(s.token), device: s.device, created_at: s.created_at, last_seen: s.last_seen, current: s.token === currentToken }));
+}
+
+/** Signs out one of the user's own sessions; false when there is no such session. */
+export function revokeSession(userId, id) {
+  let n = 0;
+  for (const s of db.prepare('SELECT token FROM sessions WHERE user_id = ?').all(userId)) {
+    if (sessionId(s.token) === id) n += dropStmt.run(s.token).changes;
+  }
+  return n > 0;
+}
+
+export const revokeOtherSessions = (userId, keepToken) =>
+  db.prepare('DELETE FROM sessions WHERE user_id = ? AND token != ?').run(userId, keepToken || '').changes;
 
 export function userFromToken(token) {
   if (!token) return null;
   const u = sessionStmt.get(token);
   if (!u) return null;
+  if (now() - u.last_seen > sessionIdleSeconds()) { dropStmt.run(token); return null; }
   if (now() - u.last_seen > 300) touchStmt.run(now(), token);
   return u;
 }
@@ -131,7 +163,19 @@ export default async function routes(app) {
     if (!verifyPassword(String(current || ''), req.user.pass)) throw new HttpError(403, 'Huidig wachtwoord klopt niet.');
     if (String(next || '').length < 6) throw new HttpError(400, 'Wachtwoord moet minstens 6 tekens zijn.');
     db.prepare('UPDATE users SET pass = ? WHERE id = ?').run(hashPassword(next), req.user.id);
-    db.prepare('DELETE FROM sessions WHERE user_id = ? AND token != ?').run(req.user.id, tokenFromRequest(req));
+    revokeOtherSessions(req.user.id, tokenFromRequest(req));
+    return { ok: true };
+  });
+
+  // --- own sessions ("Apparaten") -----------------------------------------
+  app.get('/api/auth/sessions', { preHandler: requireUser }, async (req) => ({
+    sessions: listSessions(req.user.id, tokenFromRequest(req)), idleDays: sessionIdleSeconds() / 86400,
+  }));
+  app.post('/api/auth/sessions/revoke-others', { preHandler: requireUser }, async (req) => ({
+    ok: true, revoked: revokeOtherSessions(req.user.id, tokenFromRequest(req)),
+  }));
+  app.delete('/api/auth/sessions/:id', { preHandler: requireUser }, async (req) => {
+    if (!revokeSession(req.user.id, String(req.params.id))) throw new HttpError(404, 'Dit apparaat is al uitgelogd.');
     return { ok: true };
   });
 

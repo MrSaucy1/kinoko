@@ -6,7 +6,7 @@ import fastifyStatic from '@fastify/static';
 import fastifyWebsocket from '@fastify/websocket';
 import { config } from './config.js';
 import { db, settings, HttpError } from './db.js';
-import authRoutes, { needsSetup, createUser, createSession, publicUser, requireAdmin } from './auth.js';
+import authRoutes, { needsSetup, createUser, createSession, publicUser, requireAdmin, purgeSessions } from './auth.js';
 import libraryRoutes, { scanAll, scanState } from './library.js';
 import metadataRoutes, { metaState } from './metadata.js';
 import streamRoutes, { cleanupTranscodes } from './stream.js';
@@ -45,7 +45,7 @@ app.post('/api/setup', async (req) => {
 app.get('/api/admin/settings', { preHandler: requireAdmin }, async (req) => ({
   serverName: settings.get('server_name'), publicUrl: publicUrl(), currentUrl: publicUrl(req), lan: lanUrls(),
   onboarded: settings.get('onboarded', false), scanHours: settings.get('scan_hours', 6), version: config.version,
-  ffmpeg: await ffmpegAvailable(), fingerprint: settings.get('fingerprint', true),
+  ffmpeg: await ffmpegAvailable(), fingerprint: settings.get('fingerprint', true), sessionIdleDays: settings.get('session_idle_days', 90),
   counts: {
     movies: db.prepare("SELECT COUNT(*) c FROM titles WHERE kind = 'movie'").get().c,
     shows: db.prepare("SELECT COUNT(*) c FROM titles WHERE kind = 'show'").get().c,
@@ -65,6 +65,7 @@ app.put('/api/admin/settings', { preHandler: requireAdmin }, async (req) => {
   if (typeof b.onboarded === 'boolean') settings.set('onboarded', b.onboarded);
   if (Number(b.scanHours) >= 1 && Number(b.scanHours) <= 168) settings.set('scan_hours', Number(b.scanHours));
   if (typeof b.fingerprint === 'boolean') settings.set('fingerprint', b.fingerprint);
+  if (Number.isInteger(Number(b.sessionIdleDays)) && Number(b.sessionIdleDays) >= 1 && Number(b.sessionIdleDays) <= 3650) settings.set('session_idle_days', Number(b.sessionIdleDays));
   return { ok: true };
 });
 
@@ -108,6 +109,8 @@ setInterval(() => {
 setTimeout(() => syncAllPeers(), 20_000).unref();
 setInterval(() => syncAllPeers(), 30 * 60_000).unref();
 setInterval(() => syncAllSources(), 12 * 3600_000).unref();
+purgeSessions();
+setInterval(() => purgeSessions(), 6 * 3600_000).unref();
 
 const stop = async () => { cleanupTranscodes(); await app.close(); process.exit(0); };
 process.on('SIGTERM', stop);
