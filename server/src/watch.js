@@ -4,7 +4,7 @@
 import { db, now, randomToken, HttpError, settings } from './db.js';
 import { requireUser, userFromToken, tokenFromRequest } from './auth.js';
 import { card } from './catalog.js';
-import { playLocal } from './stream.js';
+import { playLocal, applyLimit, limitFor, stripOriginal } from './stream.js';
 import { remotePlay } from './federation.js';
 
 const rooms = new Map();
@@ -60,7 +60,7 @@ export default async function routes(app) {
     if (!file) throw new HttpError(404, 'Deze versie bestaat niet meer.');
     let code; do { code = newCode(); } while (rooms.has(code));
     rooms.set(code, {
-      code, hostName: req.user.name, titleId: file.title_id, episodeId: file.episode_id || 0, fileId: file.id,
+      code, hostName: req.user.name, hostLimit: limitFor(req.user), titleId: file.title_id, episodeId: file.episode_id || 0, fileId: file.id,
       state: { playing: false, position: Number(position) || 0, at: Date.now() },
       clients: new Map(), guests: new Map(), guestSeq: 0, emptySince: Date.now(), createdAt: now(),
     });
@@ -82,11 +82,14 @@ export default async function routes(app) {
   // Members (guests included) get a stream for whatever the room is watching.
   app.post('/api/watch/:code/play', async (req) => {
     const room = getRoom(req.params.code);
-    if (!identify(room, req)) throw new HttpError(401, 'Doe eerst mee met de kijksessie.');
+    const me = identify(room, req);
+    if (!me) throw new HttpError(401, 'Doe eerst mee met de kijksessie.');
     const file = db.prepare('SELECT * FROM files WHERE id = ?').get(room.fileId);
     if (!file) throw new HttpError(404, 'Deze versie bestaat niet meer.');
-    const play = file.peer_id ? await remotePlay(file, req.body || {}) : playLocal(file, req.body || {});
-    return { ...play, room: describe(room), state: currentState(room) };
+    // A guest watches under the limit of whoever opened the room.
+    const lim = applyLimit(file, req.body || {}, me.user ? limitFor(me.user) : room.hostLimit);
+    const play = file.peer_id ? await remotePlay(file, lim.body) : playLocal(file, lim.body);
+    return { ...stripOriginal(play, lim.capped), room: describe(room), state: currentState(room) };
   });
 
   app.get('/api/watch/:code/ws', { websocket: true }, (socket, req) => {

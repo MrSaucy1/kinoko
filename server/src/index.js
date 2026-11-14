@@ -7,7 +7,11 @@ import fastifyWebsocket from '@fastify/websocket';
 import { config } from './config.js';
 import { db, settings, HttpError } from './db.js';
 import authRoutes, { needsSetup, createUser, createSession, publicUser, requireAdmin, purgeSessions } from './auth.js';
-import libraryRoutes, { scanAll, scanState } from './library.js';
+import libraryRoutes, { scanAll, scanState, setLibrariesChanged } from './library.js';
+import eventRoutes from './events.js';
+import backupRoutes, { backupIfDue } from './backup.js';
+import webhookRoutes from './webhooks.js';
+import { watchLibraries, watchState } from './watcher.js';
 import metadataRoutes, { metaState } from './metadata.js';
 import streamRoutes, { cleanupTranscodes } from './stream.js';
 import subtitleRoutes from './subtitles.js';
@@ -57,7 +61,7 @@ app.get('/api/admin/settings', { preHandler: requireAdmin }, async (req) => ({
     collections: db.prepare('SELECT COUNT(*) c FROM collections').get().c,
     channels: db.prepare('SELECT COUNT(*) c FROM iptv_channels').get().c,
   },
-  tasks: { scan: scanState, metadata: metaState, markers: markerState },
+  tasks: { scan: scanState, metadata: metaState, markers: markerState }, watching: watchState,
 }));
 app.put('/api/admin/settings', { preHandler: requireAdmin }, async (req) => {
   const b = req.body || {};
@@ -69,7 +73,7 @@ app.put('/api/admin/settings', { preHandler: requireAdmin }, async (req) => {
   return { ok: true };
 });
 
-for (const r of [authRoutes, libraryRoutes, metadataRoutes, streamRoutes, subtitleRoutes, markerRoutes, catalogRoutes, watchRoutes, federationRoutes, iptvRoutes, remoteRoutes]) {
+for (const r of [authRoutes, libraryRoutes, metadataRoutes, streamRoutes, subtitleRoutes, markerRoutes, catalogRoutes, watchRoutes, federationRoutes, iptvRoutes, remoteRoutes, eventRoutes, backupRoutes, webhookRoutes]) {
   await app.register(r);
 }
 
@@ -109,6 +113,11 @@ setInterval(() => {
 setTimeout(() => syncAllPeers(), 20_000).unref();
 setInterval(() => syncAllPeers(), 30 * 60_000).unref();
 setInterval(() => syncAllSources(), 12 * 3600_000).unref();
+// New or removed files: scan about half a minute after the last change in a library folder.
+const rewatch = () => watchLibraries(() => { lastScan = Date.now(); scanAll(); });
+rewatch(); setLibrariesChanged(rewatch);
+setTimeout(() => backupIfDue(), 60_000).unref();
+setInterval(() => backupIfDue(), 3600_000).unref();
 purgeSessions();
 setInterval(() => purgeSessions(), 6 * 3600_000).unref();
 

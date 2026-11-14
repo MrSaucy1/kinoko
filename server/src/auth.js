@@ -37,7 +37,7 @@ export function createSession(userId, device = '') {
   return token;
 }
 
-export const publicUser = (u) => ({ id: u.id, name: u.name, role: u.role, avatar: u.avatar });
+export const publicUser = (u) => ({ id: u.id, name: u.name, role: u.role, avatar: u.avatar, maxQuality: u.max_quality || '' });
 
 // Failed-login throttle, per client address. Small and in-memory on purpose:
 // it only has to make online guessing impractical.
@@ -181,12 +181,22 @@ export default async function routes(app) {
 
   // --- admin: users -------------------------------------------------------
   app.get('/api/admin/users', { preHandler: requireAdmin }, async () => ({
-    users: db.prepare('SELECT id, name, role, avatar, created_at FROM users ORDER BY id').all(),
+    users: db.prepare('SELECT id, name, role, avatar, created_at, max_quality AS maxQuality FROM users ORDER BY id').all(),
     invites: db.prepare('SELECT code, expires_at FROM user_invites WHERE used_by IS NULL AND expires_at > ? ORDER BY created_at DESC').all(now()),
   }));
   app.post('/api/admin/users', { preHandler: requireAdmin }, async (req) => {
     const { name, password, role } = req.body || {};
     return { id: createUser({ name, password, role: role === 'admin' ? 'admin' : 'user' }) };
+  });
+  app.put('/api/admin/users/:id', { preHandler: requireAdmin }, async (req) => {
+    const id = Number(req.params.id);
+    if (!db.prepare('SELECT 1 FROM users WHERE id = ?').get(id)) throw new HttpError(404, 'Gebruiker niet gevonden.');
+    const { maxQuality } = req.body || {};
+    if (maxQuality !== undefined) {
+      if (!['', '1080', '720', '480', '360'].includes(String(maxQuality))) throw new HttpError(400, 'Onbekende kwaliteit.');
+      db.prepare('UPDATE users SET max_quality = ? WHERE id = ?').run(String(maxQuality), id);
+    }
+    return { ok: true };
   });
   app.delete('/api/admin/users/:id', { preHandler: requireAdmin }, async (req) => {
     const id = Number(req.params.id);

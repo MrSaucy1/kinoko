@@ -5,8 +5,28 @@ import { db, now, json, HttpError } from './db.js';
 import { probe, ffmpegAvailable } from './ffmpeg.js';
 import { VIDEO_EXT, parseMovie, parseEpisode, normKey } from './parse.js';
 import { requireAdmin } from './auth.js';
+import { emit } from './webhooks.js';
 
-const SKIP_DIRS = /^(sample|samples|extras?|featurettes?|trailers?|behind the scenes|deleted scenes|\..*|@eadir|#recycle|lost\+found)$/i;
+const SKIP_DIRS = /^(sample|samples|\..*|@eadir|#recycle|lost\+found)$/i;
+// Bonus material: lives in one of these folders, or carries one of these
+// suffixes ("Film-trailer.mkv"). It is shown on the title's page, never as a title.
+const EXTRA_DIRS = [
+  [/^trailers?$/i, 'trailer'], [/^featurettes?$/i, 'featurette'], [/^behind[ ._-]?the[ ._-]?scenes$/i, 'behind'],
+  [/^deleted[ ._-]?scenes?$/i, 'deleted'], [/^interviews?$/i, 'interview'], [/^(extras?|specials?|shorts?|scenes?|other|bonus)$/i, 'extra'],
+];
+const EXTRA_SUFFIX = /[-_. ](trailer|featurette|behindthescenes|deleted|interview|scene|short|other|extra)$/i;
+const SUFFIX_KIND = { trailer: 'trailer', featurette: 'featurette', behindthescenes: 'behind', deleted: 'deleted', interview: 'interview' };
+export const EXTRA_LABEL = { trailer: 'Trailer', featurette: 'Featurette', behind: 'Achter de schermen', deleted: 'Verwijderde scène', interview: 'Interview', extra: 'Extra' };
+const extraDirKind = (name) => { for (const [re, kind] of EXTRA_DIRS) if (re.test(name)) return kind; return null; };
+
+/** Is this file bonus material? Returns { kind, name, base } or null. `inExtraDir` = kind of the enclosing extras folder. */
+export function classifyExtra(file, inExtraDir = null) {
+  const stem = path.basename(file, path.extname(file));
+  const m = stem.match(EXTRA_SUFFIX);
+  if (inExtraDir) return { kind: m ? (SUFFIX_KIND[m[1].toLowerCase()] || inExtraDir) : inExtraDir, name: (m ? stem.slice(0, m.index) : stem).replace(/[._]/g, ' ').trim() || stem, main: null };
+  if (m && stem.slice(0, m.index).trim()) return { kind: SUFFIX_KIND[m[1].toLowerCase()] || 'extra', name: EXTRA_LABEL[SUFFIX_KIND[m[1].toLowerCase()] || 'extra'], main: stem.slice(0, m.index) };
+  return null;
+}
 
 // ---------------------------------------------------------------------------
 // Titles
@@ -70,7 +90,7 @@ const afterScan = [];
 /** Other modules (metadata, markers, collections) hook in here. */
 export const onScanFinished = (fn) => afterScan.push(fn);
 
-async function walk(dir, out) {
+async function walk(dir, out, extras = [], extraKind = null, extraBase = null) {
   let entries;
   try { entries = await fs.promises.readdir(dir, { withFileTypes: true }); } catch { return; }
   for (const e of entries) {
@@ -79,17 +99,65 @@ async function walk(dir, out) {
     if (e.isSymbolicLink()) {
       try { const st = await fs.promises.stat(full); isDir = st.isDirectory(); isFile = st.isFile(); } catch { continue; }
     }
-    if (isDir) { if (!SKIP_DIRS.test(e.name)) await walk(full, out); }
-    else if (isFile && VIDEO_EXT.has(path.extname(e.name).toLowerCase()) && !/[\s._-]sample\./i.test(e.name) && !e.name.startsWith('.')) out.push(full);
+    if (isDir) {
+      if (SKIP_DIRS.test(e.name)) continue;
+      const kind = extraKind || extraDirKind(e.name);
+      // `base` is the folder the extras belong to: the one that holds the Extras folder.
+      await walk(full, out, extras, kind, kind ? (extraBase || dir) : null);
+    } else if (isFile && VIDEO_EXT.has(path.extname(e.name).toLowerCase()) && !/[\s._-]sample\./i.test(e.name) && !e.name.startsWith('.')) {
+      let x = classifyExtra(full, extraKind);
+      // A suffix alone proves nothing ("The Other.mkv" is a film): the main file must sit next to it.
+      if (x && x.main && !entries.some((o) => o.name !== e.name && VIDEO_EXT.has(path.extname(o.name).toLowerCase()) && path.basename(o.name, path.extname(o.name)) === x.main)) x = null;
+      if (x) extras.push({ file: full, ...x, base: extraBase || dir });
+      else out.push(full);
+    }
+  }
+}
+
+/** Links bonus files to the title they sit next to. Runs after the main files of the library are in. */
+async function scanExtras(lib, roots, found) {
+  const like = (dir) => dir.replace(/[\\%_]/g, '\\$&') + path.sep + '%';
+  const existing = new Map(db.prepare('SELECT id, path, size, mtime FROM extras WHERE library_id = ?').all(lib.id).map((r) => [r.path, r]));
+  const seen = new Set();
+  for (const x of found) {
+    let st; try { st = await fs.promises.stat(x.file); } catch { continue; }
+    const mtime = Math.floor(st.mtimeMs / 1000);
+    let titleId = null;
+    if (x.main) {
+      // "Film-trailer.mkv" next to "Film.mkv".
+      const sib = db.prepare("SELECT title_id, path FROM files WHERE peer_id IS NULL AND library_id = ? AND path LIKE ? ESCAPE '\\'").all(lib.id, like(x.base))
+        .find((f) => path.dirname(f.path) === x.base && path.basename(f.path, path.extname(f.path)) === x.main);
+      if (sib) titleId = sib.title_id;
+    }
+    if (!titleId && !roots.includes(x.base)) {
+      // Everything under the folder must be one title, otherwise we would be guessing.
+      const ids = db.prepare("SELECT DISTINCT title_id FROM files WHERE peer_id IS NULL AND library_id = ? AND path LIKE ? ESCAPE '\\' LIMIT 2").all(lib.id, like(x.base));
+      if (ids.length === 1) titleId = ids[0].title_id;
+    }
+    if (!titleId) continue;
+    seen.add(x.file);
+    const prev = existing.get(x.file);
+    if (prev && prev.size === st.size && prev.mtime === mtime) { db.prepare('UPDATE extras SET title_id = ?, name = ?, kind = ? WHERE id = ?').run(titleId, x.name, x.kind, prev.id); continue; }
+    const info = (await probe(x.file)) || {};
+    const cols = { library_id: lib.id, title_id: titleId, path: x.file, name: x.name, kind: x.kind, size: st.size, mtime, duration: info.duration || 0,
+      width: info.width || 0, height: info.height || 0, vcodec: info.vcodec || '', acodec: info.acodec || '', container: info.container || path.extname(x.file).slice(1) };
+    if (prev) db.prepare('UPDATE extras SET title_id=@title_id, name=@name, kind=@kind, size=@size, mtime=@mtime, duration=@duration, width=@width, height=@height, vcodec=@vcodec, acodec=@acodec, container=@container WHERE id=@id').run({ title_id: cols.title_id, name: cols.name, kind: cols.kind, size: cols.size, mtime: cols.mtime, duration: cols.duration, width: cols.width, height: cols.height, vcodec: cols.vcodec, acodec: cols.acodec, container: cols.container, id: prev.id });
+    else db.prepare('INSERT INTO extras (library_id, title_id, path, name, kind, size, mtime, duration, width, height, vcodec, acodec, container, added_at) VALUES (@library_id, @title_id, @path, @name, @kind, @size, @mtime, @duration, @width, @height, @vcodec, @acodec, @container, @added_at)').run({ ...cols, added_at: now() });
+  }
+  const reachable = roots.filter((r) => { try { return fs.statSync(r).isDirectory(); } catch { return false; } });
+  for (const [p, row] of existing) {
+    if (seen.has(p)) continue;
+    // Same rule as for files: an unreachable share must not wipe what we know.
+    if (reachable.some((r) => p.startsWith(r + path.sep)) || !roots.some((r) => p.startsWith(r + path.sep))) db.prepare('DELETE FROM extras WHERE id = ?').run(row.id);
   }
 }
 
 async function scanLibrary(lib) {
   const roots = json(lib.paths, []);
-  const found = [];
+  const found = [], extras = [];
   for (const root of roots) {
     const list = [];
-    await walk(root, list);
+    await walk(root, list, extras);
     for (const f of list) found.push({ file: f, root });
   }
   // A root that is unreachable (unmounted share) must not wipe its files.
@@ -138,8 +206,20 @@ async function scanLibrary(lib) {
     if (seen.has(p)) continue;
     if (reachable.some((r) => p.startsWith(r + path.sep))) db.prepare('DELETE FROM files WHERE id = ?').run(row.id);
     else if (!roots.some((r) => p.startsWith(r + path.sep))) db.prepare('DELETE FROM files WHERE id = ?').run(row.id); // path removed from library
-  }
+  }  await scanExtras(lib, roots, extras);
 }
+
+/** Tells the webhooks what a scan brought in. */
+function announce(since) {
+  const added = db.prepare('SELECT title, year, kind FROM titles WHERE added_at >= ? AND id IN (SELECT title_id FROM files WHERE peer_id IS NULL) ORDER BY id').all(since);
+  for (const t of added.slice(0, 10)) emit('title.added', { text: `${t.kind === 'show' ? 'Serie' : 'Film'}: ${t.title}${t.year ? ` (${t.year})` : ''}`, fields: { title: t.title, year: t.year, kind: t.kind } });
+  if (added.length > 10) emit('title.added', { text: `…en nog ${added.length - 10} andere nieuwe titels.` });
+  emit('scan.finished', { text: `Scan klaar: ${scanState.total} bestanden bekeken, ${added.length} nieuwe ${added.length === 1 ? 'titel' : 'titels'}.`, fields: { files: scanState.total, added: added.length } });
+}
+
+/** Set by index.js: called whenever the set of library folders changes. */
+let onLibrariesChanged = () => {};
+export const setLibrariesChanged = (fn) => { onLibrariesChanged = fn; };
 
 let rescan = false;
 export async function scanAll() {
@@ -153,9 +233,11 @@ export async function scanAll() {
     for (const fn of afterScan) {
       try { await fn(scanState); } catch (e) { console.error('[scan] na-stap mislukt:', e); }
     }
+    announce(scanState.startedAt);
   } catch (e) {
     console.error('[scan]', e);
     scanState.error = String(e.message || e);
+    emit('error', { text: `Scannen is mislukt: ${scanState.error}` });
   } finally {
     Object.assign(scanState, { running: false, phase: 'idle', finishedAt: now() });
   }
@@ -193,7 +275,7 @@ export default async function routes(app) {
     if (!['movies', 'shows'].includes(type)) throw new HttpError(400, 'Kies films of series.');
     const info = db.prepare('INSERT INTO libraries (name, type, paths, shared, created_at) VALUES (?,?,?,?,?)')
       .run(String(name).trim(), type, JSON.stringify(cleanPaths(paths)), shared ? 1 : 0, now());
-    scanAll();
+    onLibrariesChanged(); scanAll();
     return { id: info.lastInsertRowid };
   });
 
@@ -203,13 +285,13 @@ export default async function routes(app) {
     const { name = lib.name, paths, shared = !!lib.shared } = req.body || {};
     db.prepare('UPDATE libraries SET name = ?, paths = ?, shared = ? WHERE id = ?')
       .run(String(name).trim() || lib.name, paths ? JSON.stringify(cleanPaths(paths)) : lib.paths, shared ? 1 : 0, lib.id);
-    if (paths) scanAll();
+    if (paths) { onLibrariesChanged(); scanAll(); }
     return { ok: true };
   });
 
   app.delete('/api/admin/libraries/:id', { preHandler: requireAdmin }, async (req) => {
     db.prepare('DELETE FROM libraries WHERE id = ?').run(req.params.id);
-    pruneOrphans();
+    pruneOrphans(); onLibrariesChanged();
     return { ok: true };
   });
 

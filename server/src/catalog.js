@@ -4,6 +4,7 @@ import { db, now, json, settings, HttpError } from './db.js';
 import { requireUser } from './auth.js';
 import { imgUrl } from './metadata.js';
 import { QUALITIES } from './stream.js';
+import { EXTRA_LABEL } from './library.js';
 
 const GENRE_NL = {
   action: 'Actie', adventure: 'Avontuur', animation: 'Animatie', comedy: 'Komedie', crime: 'Misdaad', documentary: 'Documentaire',
@@ -93,7 +94,13 @@ export function titleDetail(id, userId) {
     inList: userId ? !!db.prepare('SELECT 1 FROM mylist WHERE user_id = ? AND title_id = ?').get(userId, t.id) : false,
     collections: db.prepare('SELECT c.id, c.name FROM collections c JOIN collection_items i ON i.collection_id = c.id WHERE i.title_id = ?').all(t.id),
     similar: similarTo(t),
+    extras: db.prepare('SELECT id, name, kind, duration FROM extras WHERE title_id = ? ORDER BY kind, name').all(t.id)
+      .map((x) => ({ id: x.id, name: x.name, kind: x.kind, label: EXTRA_LABEL[x.kind] || 'Extra', duration: x.duration })),
   };
+  if (userId && t.kind === 'show') {
+    const p = db.prepare('SELECT audio_lang, sub_lang FROM series_prefs WHERE user_id = ? AND title_id = ?').get(userId, t.id);
+    out.prefs = { audioLang: p?.audio_lang || '', subLang: p?.sub_lang || '' };
+  }
   const files = db.prepare('SELECT * FROM files WHERE title_id = ?').all(t.id);
   if (t.kind === 'movie') {
     out.versions = versions(files, peers);
@@ -333,6 +340,20 @@ export default async function routes(app) {
     if (!c) throw new HttpError(404, 'Collectie niet gevonden.');
     const items = db.prepare('SELECT t.* FROM collection_items i JOIN titles t ON t.id = i.title_id WHERE i.collection_id = ? ORDER BY i.ord').all(c.id);
     return { ...collectionCard(c), items: items.map(card) };
+  });
+
+  // Audio and subtitle language the user chose for a series; applied to the next episodes.
+  app.put('/api/titles/:id/prefs', { preHandler: requireUser }, async (req) => {
+    const id = Number(req.params.id);
+    if (!db.prepare('SELECT 1 FROM titles WHERE id = ?').get(id)) throw new HttpError(404, 'Titel niet gevonden.');
+    const lang = (v) => (typeof v === 'string' && /^[a-z]{2,3}$|^off$|^$/.test(v) ? v : null);
+    const prev = db.prepare('SELECT audio_lang, sub_lang FROM series_prefs WHERE user_id = ? AND title_id = ?').get(req.user.id, id) || { audio_lang: '', sub_lang: '' };
+    const audio = req.body?.audioLang === undefined ? prev.audio_lang : lang(req.body.audioLang);
+    const sub = req.body?.subLang === undefined ? prev.sub_lang : lang(req.body.subLang);
+    if (audio === null || sub === null || audio === 'off') throw new HttpError(400, 'Ongeldige taal.');
+    db.prepare(`INSERT INTO series_prefs (user_id, title_id, audio_lang, sub_lang, updated_at) VALUES (?,?,?,?,?)
+      ON CONFLICT(user_id, title_id) DO UPDATE SET audio_lang = excluded.audio_lang, sub_lang = excluded.sub_lang, updated_at = excluded.updated_at`).run(req.user.id, id, audio, sub, now());
+    return { audioLang: audio, subLang: sub };
   });
 
   app.put('/api/mylist/:id', { preHandler: requireUser }, async (req) => {

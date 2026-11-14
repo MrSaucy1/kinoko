@@ -6,7 +6,9 @@ import { spawn } from 'node:child_process';
 import { db, now, json, randomToken, HttpError, settings } from './db.js';
 import { config, dataPath } from './config.js';
 import { activeBackend } from './ffmpeg.js';
-import { requireUser, requireAdmin } from './auth.js';
+import { requireUser, requireAdmin, tokenFromRequest, sessionId } from './auth.js';
+import { notifyUser } from './events.js';
+import { emit } from './webhooks.js';
 
 export const SEG = 4; // seconds per HLS segment
 export const QUALITIES = {
@@ -24,6 +26,12 @@ const tickets = new Map();
 export function issueTicket(fileId, hours = 12) {
   const t = randomToken(24);
   tickets.set(t, { fileId, expires: Date.now() + hours * 3600_000 });
+  return t;
+}
+/** A ticket for a bonus file (extras table) instead of a library file. */
+export function issueExtraTicket(extraId, hours = 12) {
+  const t = randomToken(24);
+  tickets.set(t, { extraId, expires: Date.now() + hours * 3600_000 });
   return t;
 }
 setInterval(() => { const n = Date.now(); for (const [k, v] of tickets) if (v.expires < n) tickets.delete(k); }, 600_000).unref();
@@ -236,11 +244,55 @@ export function playLocal(file, { quality = 'original', audio = 0, caps = 'any' 
   return { ...base, mode: 'hls', quality: String(q), url: `/api/hls/${s.id}/index.m3u8`, sessionId: s.id };
 }
 
+// ---------------------------------------------------------------------------
+// Per-user quality limit (set by the admin)
+// ---------------------------------------------------------------------------
+export const limitFor = (user) => (QUALITIES[user?.max_quality] ? Number(user.max_quality) : 0);
+
+/**
+ * Applies a user's limit to a play request. The original may still be played
+ * when it is itself within the limit; anything above is transcoded down.
+ * Returns the request to use and whether the original is off limits.
+ */
+export function applyLimit(file, body, limit) {
+  if (!limit) return { body, capped: false };
+  const cap = QUALITIES[limit];
+  const fits = file.height > 0 && file.height <= cap.height && file.bitrate > 0 && file.bitrate <= cap.video * 1.25;
+  const want = body.quality;
+  if (QUALITIES[want] && Number(want) <= limit) return { body, capped: !fits };
+  if (fits && (want === undefined || want === 'original' || !QUALITIES[want])) return { body, capped: false };
+  return { body: { ...body, quality: String(limit) }, capped: true };
+}
+/** A capped user gets no link to the original file. */
+export const stripOriginal = (play, capped) => { if (capped && play) { delete play.download; play.limited = true; } return play; };
+
+/** Bonus material plays directly when the client can, otherwise as a transcode. */
+export function playExtra(x, { caps = 'any' } = {}, limit = 0) {
+  if (!fs.existsSync(x.path)) throw new HttpError(404, 'Het bestand staat niet meer op schijf. Scan de bibliotheek opnieuw.');
+  const fits = !limit || (x.height > 0 && x.height <= QUALITIES[limit].height);
+  if (fits && canDirect(x, caps)) return { mode: 'direct', quality: 'original', duration: x.duration, url: `/api/stream/${issueExtraTicket(x.id)}`, audio: [], subtitles: [], markers: {} };
+  const q = limit || (x.height > 720 ? 1080 : x.height > 480 ? 720 : 480);
+  const s = createHlsSession(x, { quality: q });
+  return { mode: 'hls', quality: String(q), duration: x.duration, url: `/api/hls/${s.id}/index.m3u8`, sessionId: s.id, audio: [], subtitles: [], markers: {} };
+}
+
+const announced = new Map();   // "user:title" -> time, so a quality switch is not a new "started watching"
+function announcePlayback(user, file) {
+  const key = `${user.id}:${file.title_id}:${file.episode_id || 0}`;
+  if (Date.now() - (announced.get(key) || 0) < 15 * 60_000) return;
+  announced.set(key, Date.now());
+  if (announced.size > 500) for (const [k, v] of announced) if (Date.now() - v > 15 * 60_000) announced.delete(k);
+  const t = db.prepare('SELECT title FROM titles WHERE id = ?').get(file.title_id);
+  const e = file.episode_id ? db.prepare('SELECT season, episode FROM episodes WHERE id = ?').get(file.episode_id) : null;
+  if (t) emit('playback.started', { text: `${user.name} kijkt ${t.title}${e ? ` (S${e.season}A${e.episode})` : ''}`, fields: { user: user.name, title: t.title, season: e?.season, episode: e?.episode } });
+}
+
 export default async function routes(app) {
   app.get('/api/stream/:ticket', async (req, reply) => {
     const t = tickets.get(req.params.ticket);
     if (!t || t.expires < Date.now()) throw new HttpError(403, 'Deze link is verlopen.');
-    const file = db.prepare('SELECT path FROM files WHERE id = ? AND peer_id IS NULL').get(t.fileId);
+    const file = t.extraId ? db.prepare('SELECT path FROM extras WHERE id = ?').get(t.extraId)
+      : db.prepare('SELECT path FROM files WHERE id = ? AND peer_id IS NULL').get(t.fileId);
     if (!file) throw new HttpError(404, 'Bestand niet gevonden.');
     return sendFile(req, reply, file.path, { download: req.query.download === '1' });
   });
@@ -269,15 +321,35 @@ export default async function routes(app) {
     const body = req.body || {};
     const file = db.prepare('SELECT * FROM files WHERE id = ?').get(Number(body.fileId));
     if (!file) throw new HttpError(404, 'Deze versie bestaat niet meer.');
+    const lim = applyLimit(file, body, limitFor(req.user));
+    let play;
     if (file.peer_id) {
       if (!remotePlayer) throw new HttpError(500, 'Gekoppelde servers zijn niet beschikbaar.');
-      return remotePlayer(file, body);
-    }
-    return playLocal(file, body);
+      play = await remotePlayer(file, lim.body);
+    } else play = playLocal(file, lim.body);
+    announcePlayback(req.user, file);
+    const off = db.prepare('SELECT offset_ms FROM sub_offsets WHERE user_id = ? AND file_id = ?').get(req.user.id, file.id);
+    return { ...stripOriginal(play, lim.capped), subOffsetMs: off ? off.offset_ms : 0 };
+  });
+
+  app.post('/api/extras/:id/play', { preHandler: requireUser }, async (req) => {
+    const x = db.prepare('SELECT * FROM extras WHERE id = ?').get(Number(req.params.id));
+    if (!x) throw new HttpError(404, 'Dit extra bestaat niet meer.');
+    return playExtra(x, req.body || {}, limitFor(req.user));
+  });
+
+  // Subtitle timing correction, remembered per user and file.
+  app.put('/api/files/:id/sub-offset', { preHandler: requireUser }, async (req) => {
+    const fileId = Number(req.params.id), ms = Math.round(Number(req.body?.offsetMs));
+    if (!db.prepare('SELECT 1 FROM files WHERE id = ?').get(fileId)) throw new HttpError(404, 'Deze versie bestaat niet meer.');
+    if (!Number.isFinite(ms) || Math.abs(ms) > 600_000) throw new HttpError(400, 'Ongeldige verschuiving.');
+    if (ms === 0) db.prepare('DELETE FROM sub_offsets WHERE user_id = ? AND file_id = ?').run(req.user.id, fileId);
+    else db.prepare('INSERT INTO sub_offsets (user_id, file_id, offset_ms) VALUES (?,?,?) ON CONFLICT(user_id, file_id) DO UPDATE SET offset_ms = excluded.offset_ms').run(req.user.id, fileId, ms);
+    return { offsetMs: ms };
   });
 
   app.post('/api/progress', { preHandler: requireUser }, async (req) => {
-    const { titleId, episodeId = 0, position = 0, duration = 0, watched } = req.body || {};
+    const { titleId, episodeId = 0, position = 0, duration = 0, watched, paused } = req.body || {};
     if (!db.prepare('SELECT 1 FROM titles WHERE id = ?').get(Number(titleId))) throw new HttpError(404, 'Titel niet gevonden.');
     const key = [req.user.id, Number(titleId), Number(episodeId) || 0];
     const prev = db.prepare('SELECT watched FROM progress WHERE user_id = ? AND title_id = ? AND episode_id = ?').get(...key);
@@ -288,6 +360,13 @@ export default async function routes(app) {
     db.prepare(`INSERT INTO progress (user_id, title_id, episode_id, position, duration, watched, updated_at) VALUES (?,?,?,?,?,?,?)
       ON CONFLICT(user_id, title_id, episode_id) DO UPDATE SET position = excluded.position, duration = excluded.duration,
       watched = excluded.watched, updated_at = excluded.updated_at`).run(...key, pos, Number(duration) || 0, flag, now());
+    // Paused here: offer to continue on the user's other open devices.
+    if (paused === true && !flag && pos > 30) {
+      const t = db.prepare('SELECT id, kind, title FROM titles WHERE id = ?').get(Number(titleId));
+      const e = key[2] ? db.prepare('SELECT season, episode FROM episodes WHERE id = ?').get(key[2]) : null;
+      notifyUser(req.user.id, { t: 'resume', titleId: t.id, kind: t.kind, title: t.title, episodeId: key[2], season: e?.season, episode: e?.episode, position: pos },
+        { exceptSession: sessionId(tokenFromRequest(req) || '') });
+    }
     return { ok: true, watched: !!flag };
   });
 
