@@ -106,7 +106,7 @@ let hwCache = null;
 
 export async function detectHardware(force = false) {
   if (hwCache && !force) return hwCache;
-  const result = { ffmpeg: await ffmpegAvailable(), backends: {}, device: null };
+  const result = { ffmpeg: await ffmpegAvailable(), backends: {}, device: null, filters: {} };
   if (result.ffmpeg) {
     for (const [id, b] of Object.entries(HW_BACKENDS)) {
       let ok = false;
@@ -118,6 +118,10 @@ export async function detectHardware(force = false) {
     }
     const mux = await run(config.ffmpeg, ['-hide_banner', '-muxers'], { timeout: 8000 });
     result.chromaprint = /\bchromaprint\b/.test(mux.stdout);
+    // What this build offers for HDR → SDR.
+    const fl = await run(config.ffmpeg, ['-hide_banner', '-filters'], { timeout: 8000 });
+    const has = (name) => new RegExp(`\\s${name}\\s`).test(fl.stdout);
+    result.filters = { zscale: has('zscale'), tonemap: has('tonemap'), tonemap_vaapi: has('tonemap_vaapi'), tonemap_opencl: has('tonemap_opencl'), libplacebo: has('libplacebo') };
   }
   hwCache = result;
   return result;

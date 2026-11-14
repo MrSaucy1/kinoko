@@ -5,11 +5,11 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { db, now, json, randomToken, HttpError, settings } from './db.js';
 import { config, dataPath } from './config.js';
-import { activeBackend } from './ffmpeg.js';
+import { activeBackend, detectHardware } from './ffmpeg.js';
 import { requireUser, requireAdmin, tokenFromRequest, sessionId } from './auth.js';
 import { notifyUser } from './events.js';
 import { emit } from './webhooks.js';
-import { requireFile, requireTitle, scopeFor } from './access.js';
+import { requireFile, requireTitle, scopeFor, canSeeExtra } from './access.js';
 
 export const SEG = 4; // seconds per HLS segment
 export const QUALITIES = {
@@ -29,6 +29,8 @@ export function issueTicket(fileId, hours = 12) {
   tickets.set(t, { fileId, expires: Date.now() + hours * 3600_000 });
   return t;
 }
+/** The library file a valid ticket stands for, or null. */
+export function ticketFile(ticket) { const t = tickets.get(ticket); return t && t.fileId && t.expires > Date.now() ? t.fileId : null; }
 /** A ticket for a bonus file (extras table) instead of a library file. */
 export function issueExtraTicket(extraId, hours = 12) {
   const t = randomToken(24);
@@ -62,25 +64,45 @@ export function sendFile(req, reply, file, { download = false, type = null } = {
 const sessions = new Map();
 const segPath = (s, n) => path.join(s.dir, `${String(n).padStart(5, '0')}.ts`);
 
+/**
+ * HDR (PQ/HLG) sources are tone-mapped to SDR while transcoding, otherwise the
+ * picture comes out grey and washed. `filters` says what this ffmpeg can do.
+ *   software: zscale + tonemap (needs libzimg)   VA-API: tonemap_vaapi on the GPU
+ */
+export const SW_TONEMAP = 'zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv';
+
 /** ffmpeg argument sets to try in order: full hardware → hardware encode → software. */
-function pipelines(backend, s) {
+export function pipelines(backend, s, filters = {}) {
   const h = s.height;
-  const sw = { name: 'software', pre: [], vf: `scale=-2:${h},format=yuv420p`, enc: ['-c:v', 'libx264', '-preset', 'veryfast', '-profile:v', 'high', '-sc_threshold', '0'] };
+  // Software tone-mapping, used by the software pipeline and by "hardware encode only" ones.
+  const tm = s.hdr && filters.zscale && filters.tonemap ? `${SW_TONEMAP},` : '';
+  const sw = { name: tm ? 'software+tonemap' : 'software', pre: [], vf: `${tm}scale=-2:${h},format=yuv420p`, enc: ['-c:v', 'libx264', '-preset', 'veryfast', '-profile:v', 'high', '-sc_threshold', '0'] };
+  // If the tone-mapping chain itself fails on this build, plain software still gives a picture.
+  const plain = { name: 'software', pre: [], vf: `scale=-2:${h},format=yuv420p`, enc: sw.enc };
+  const list = hardwarePipelines(backend, s, filters, tm, sw);
+  return tm ? [...list, plain] : list;
+}
+
+function hardwarePipelines(backend, s, filters, tm, sw) {
+  const h = s.height;
   const dev = backend.device || '/dev/dri/renderD128';
   switch (backend.id) {
     case 'vaapi': return [
-      { name: 'vaapi', pre: ['-hwaccel', 'vaapi', '-hwaccel_device', dev, '-hwaccel_output_format', 'vaapi'], vf: `scale_vaapi=w=-2:h=${h}:format=nv12`, enc: ['-c:v', 'h264_vaapi'] },
-      { name: 'vaapi-encode', pre: ['-vaapi_device', dev], vf: `scale=-2:${h},format=nv12,hwupload`, enc: ['-c:v', 'h264_vaapi'] },
+      // With HDR and no tonemap_vaapi, the all-GPU path would give washed colours: skip straight to the next.
+      ...(s.hdr && !filters.tonemap_vaapi ? [] : [{ name: s.hdr ? 'vaapi+tonemap' : 'vaapi', pre: ['-hwaccel', 'vaapi', '-hwaccel_device', dev, '-hwaccel_output_format', 'vaapi'],
+        vf: s.hdr ? `tonemap_vaapi=format=nv12:t=bt709:m=bt709:p=bt709,scale_vaapi=w=-2:h=${h}:format=nv12` : `scale_vaapi=w=-2:h=${h}:format=nv12`, enc: ['-c:v', 'h264_vaapi'] }]),
+      { name: 'vaapi-encode', pre: ['-vaapi_device', dev], vf: `${tm}scale=-2:${h},format=nv12,hwupload`, enc: ['-c:v', 'h264_vaapi'] },
       sw];
     case 'qsv': return [
-      { name: 'qsv', pre: ['-hwaccel', 'qsv', '-hwaccel_output_format', 'qsv'], vf: `scale_qsv=w=-1:h=${h}:format=nv12`, enc: ['-c:v', 'h264_qsv', '-preset', 'veryfast', '-forced_idr', '1'] },
-      { name: 'qsv-encode', pre: [], vf: `scale=-2:${h},format=nv12`, enc: ['-c:v', 'h264_qsv', '-preset', 'veryfast', '-forced_idr', '1'] },
+      // Quick Sync has no tone-mapping filter we can rely on; HDR goes through software filters + QSV encode.
+      ...(s.hdr ? [] : [{ name: 'qsv', pre: ['-hwaccel', 'qsv', '-hwaccel_output_format', 'qsv'], vf: `scale_qsv=w=-1:h=${h}:format=nv12`, enc: ['-c:v', 'h264_qsv', '-preset', 'veryfast', '-forced_idr', '1'] }]),
+      { name: 'qsv-encode', pre: [], vf: `${tm}scale=-2:${h},format=nv12`, enc: ['-c:v', 'h264_qsv', '-preset', 'veryfast', '-forced_idr', '1'] },
       sw];
     case 'nvenc': return [
-      { name: 'nvenc', pre: ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'], vf: `scale_cuda=-2:${h}:format=yuv420p`, enc: ['-c:v', 'h264_nvenc', '-preset', 'p4', '-forced-idr', '1'] },
-      { name: 'nvenc-encode', pre: [], vf: `scale=-2:${h},format=yuv420p`, enc: ['-c:v', 'h264_nvenc', '-preset', 'p4', '-forced-idr', '1'] },
+      ...(s.hdr ? [] : [{ name: 'nvenc', pre: ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'], vf: `scale_cuda=-2:${h}:format=yuv420p`, enc: ['-c:v', 'h264_nvenc', '-preset', 'p4', '-forced-idr', '1'] }]),
+      { name: 'nvenc-encode', pre: [], vf: `${tm}scale=-2:${h},format=yuv420p`, enc: ['-c:v', 'h264_nvenc', '-preset', 'p4', '-forced-idr', '1'] },
       sw];
-    case 'v4l2m2m': return [{ name: 'v4l2m2m', pre: [], vf: `scale=-2:${h},format=yuv420p`, enc: ['-c:v', 'h264_v4l2m2m'] }, sw];
+    case 'v4l2m2m': return [{ name: 'v4l2m2m', pre: [], vf: `${tm}scale=-2:${h},format=yuv420p`, enc: ['-c:v', 'h264_v4l2m2m'] }, sw];
     default: return [sw];
   }
 }
@@ -109,7 +131,7 @@ function stopProc(s) {
 
 async function startProc(s, startSeg) {
   stopProc(s);
-  const list = pipelines(await activeBackend(), s);
+  const list = pipelines(await activeBackend(), s, (await detectHardware()).filters);
   const pipe = list[Math.min(s.pipeIndex, list.length - 1)];
   s.pipeline = pipe.name; s.procStart = startSeg; s.head = startSeg - 1; s.exited = false; s.stderr = '';
   const proc = spawn(config.ffmpeg, ffArgs(s, pipe, startSeg), { stdio: ['ignore', 'ignore', 'pipe'] });
@@ -137,7 +159,7 @@ async function ensureSegment(s, n) {
       if (fs.existsSync(file)) return file;
       if (s.exitCode === 0) break; // finished cleanly but the segment is past the end
       // The pipeline failed: fall back to the next one (hardware → software).
-      const list = pipelines(await activeBackend(), s);
+      const list = pipelines(await activeBackend(), s, (await detectHardware()).filters);
       if (s.pipeIndex < list.length - 1) {
         console.warn(`[transcode] pipeline "${s.pipeline}" faalde, val terug. ${s.stderr.trim().split('\n').slice(-2).join(' | ')}`);
         s.pipeIndex++;
@@ -157,7 +179,7 @@ export function createHlsSession(file, { quality = 720, audio = 0 } = {}) {
   const height = Math.max(144, Math.min(q.height, srcH) & ~1);
   const id = randomToken(18);
   const s = {
-    id, file: file.path, dir: dataPath('transcode', id), duration: file.duration, height,
+    id, file: file.path, dir: dataPath('transcode', id), duration: file.duration, height, hdr: !!file.hdr,
     video: Math.round(q.video * Math.min(1, (height / q.height) ** 1.5)), audio: Number(audio) || 0,
     segCount: Math.max(1, Math.ceil(file.duration / SEG)), proc: null, procStart: 0, head: -1, pipeIndex: 0,
     lastAccess: Date.now(), lastRequested: 0, paused: false, exited: false, stderr: '', pipeline: '',
@@ -234,7 +256,10 @@ export function playLocal(file, { quality = 'original', audio = 0, caps = 'any' 
     subtitles: db.prepare('SELECT id, lang, label, source FROM subtitles WHERE file_id = ? ORDER BY lang, id').all(file.id)
       .map((s) => ({ id: s.id, lang: s.lang, label: s.label, source: s.source, url: `/api/subs/${s.id}/${issueTicket(file.id)}.vtt` })),
     download: `/api/stream/${issueTicket(file.id, 48)}?download=1`,
+    hdr: !!file.hdr,
   };
+  const trick = file.trickplay && file.trickplay !== 'none' ? json(file.trickplay, null) : null;
+  if (trick) base.trickplay = { ...trick, base: `/api/trickplay/${issueTicket(file.id)}/` };
   const wantsOriginal = quality === 'original' || !QUALITIES[quality];
   if (wantsOriginal && canDirect(file, caps)) {
     return { ...base, mode: 'direct', quality: 'original', url: `/api/stream/${issueTicket(file.id)}` };
@@ -334,8 +359,7 @@ export default async function routes(app) {
 
   app.post('/api/extras/:id/play', { preHandler: requireUser }, async (req) => {
     const x = db.prepare('SELECT * FROM extras WHERE id = ?').get(Number(req.params.id));
-    const scope = scopeFor(req.user);
-    if (!x || !(scope.all || scope.libs.has(x.library_id))) throw new HttpError(404, 'Dit extra bestaat niet meer.');
+    if (!x || !canSeeExtra(scopeFor(req.user), x)) throw new HttpError(404, 'Dit extra bestaat niet meer.');
     return playExtra(x, req.body || {}, limitFor(req.user));
   });
 
@@ -375,7 +399,7 @@ export default async function routes(app) {
     const { detectHardware } = await import('./ffmpeg.js');
     return {
       hardware: await detectHardware(), choice: settings.get('hwaccel', 'auto'), active: (await activeBackend()).id,
-      sessions: [...sessions.values()].map((s) => ({ id: s.id.slice(0, 6), file: path.basename(s.file), height: s.height, pipeline: s.pipeline, running: !!s.proc, paused: s.paused })),
+      sessions: [...sessions.values()].map((s) => ({ id: s.id.slice(0, 6), file: path.basename(s.file), height: s.height, pipeline: s.pipeline, hdr: s.hdr, running: !!s.proc, paused: s.paused })),
     };
   });
   app.put('/api/admin/transcoding', { preHandler: requireAdmin }, async (req) => {

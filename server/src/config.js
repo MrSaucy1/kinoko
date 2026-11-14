@@ -18,7 +18,7 @@ export const config = {
   version: JSON.parse(fs.readFileSync(path.join(here, '..', 'package.json'), 'utf8')).version,
 };
 
-for (const d of ['', 'images', 'transcode', 'subs', 'fingerprints', 'backups']) {
+for (const d of ['', 'images', 'transcode', 'subs', 'fingerprints', 'backups', 'trickplay']) {
   fs.mkdirSync(path.join(config.dataDir, d), { recursive: true });
 }
 

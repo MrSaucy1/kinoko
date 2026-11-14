@@ -12,6 +12,7 @@ import libraryRoutes, { scanAll, scanState, setLibrariesChanged } from './librar
 import eventRoutes from './events.js';
 import backupRoutes, { backupIfDue } from './backup.js';
 import webhookRoutes from './webhooks.js';
+import trickplayRoutes, { trickState } from './trickplay.js';
 import { watchLibraries, watchState } from './watcher.js';
 import metadataRoutes, { metaState } from './metadata.js';
 import streamRoutes, { cleanupTranscodes } from './stream.js';
@@ -66,7 +67,7 @@ app.get('/api/admin/settings', { preHandler: requireAdmin }, async (req) => ({
     collections: db.prepare('SELECT COUNT(*) c FROM collections').get().c,
     channels: db.prepare('SELECT COUNT(*) c FROM iptv_channels').get().c,
   },
-  tasks: { scan: scanState, metadata: metaState, markers: markerState }, watching: watchState,
+  tasks: { scan: scanState, metadata: metaState, markers: markerState, trickplay: trickState }, watching: watchState,
 }));
 app.put('/api/admin/settings', { preHandler: requireAdmin }, async (req) => {
   const b = req.body || {};
@@ -84,7 +85,7 @@ app.put('/api/admin/settings', { preHandler: requireAdmin }, async (req) => {
   return { ok: true };
 });
 
-for (const r of [authRoutes, libraryRoutes, metadataRoutes, streamRoutes, subtitleRoutes, markerRoutes, catalogRoutes, watchRoutes, federationRoutes, iptvRoutes, remoteRoutes, eventRoutes, backupRoutes, webhookRoutes]) {
+for (const r of [authRoutes, libraryRoutes, metadataRoutes, streamRoutes, subtitleRoutes, markerRoutes, catalogRoutes, watchRoutes, federationRoutes, iptvRoutes, remoteRoutes, eventRoutes, backupRoutes, webhookRoutes, trickplayRoutes]) {
   await app.register(r);
 }
 

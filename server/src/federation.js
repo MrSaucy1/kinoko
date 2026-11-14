@@ -51,6 +51,7 @@ export async function remotePlay(file, body) {
   const r = await peerFetch(peer, '/api/federation/play', { method: 'POST', body: { fileId: file.remote_id, quality: body.quality, audio: body.audio, caps: body.caps } });
   return {
     ...r, fileId: file.id, url: relay(peer, r.url), download: relay(peer, r.download),
+    ...(r.trickplay && { trickplay: { ...r.trickplay, base: relay(peer, r.trickplay.base) } }),
     subtitles: (r.subtitles || []).map((s) => ({ ...s, url: relay(peer, s.url) })),
     via: peer.name,
   };
@@ -80,7 +81,7 @@ function exportCatalog(base) {
       const t = db.prepare('SELECT * FROM titles WHERE id = ?').get(f.title_id);
       titles.set(f.title_id, {
         kind: t.kind, title: t.title, year: t.year, imdb_id: t.imdb_id, tmdb_id: t.tmdb_id, overview: t.overview, tagline: t.tagline,
-        genres: json(t.genres, []), cast: json(t.cast_json, []), directors: json(t.directors, []), rating: t.rating, runtime: t.runtime,
+        genres: json(t.genres, []), cast: json(t.cast_json, []), directors: json(t.directors, []), rating: t.rating, runtime: t.runtime, age: t.age,
         poster: abs(imgUrl('t', t.id, 'poster', t.poster)), backdrop: abs(imgUrl('t', t.id, 'backdrop', t.backdrop)), trailer: t.trailer,
         tmdb_collection: json(t.tmdb_collection, null), series: json(t.series_json, []), files: [],
       });
@@ -105,12 +106,12 @@ const importCatalog = db.transaction((peer, titles) => {
     if (!t.meta_at) {
       // No local metadata yet: adopt what the other server already worked out.
       db.prepare(`UPDATE titles SET imdb_id = COALESCE(imdb_id, ?), tmdb_id = COALESCE(tmdb_id, ?), overview = ?, tagline = ?, genres = ?, cast_json = ?, directors = ?,
-        rating = ?, runtime = ?, poster = ?, backdrop = ?, trailer = ?, tmdb_collection = ?, series_json = ?, meta_source = 'peer', meta_at = ? WHERE id = ?`)
+        rating = ?, runtime = ?, poster = ?, backdrop = ?, trailer = ?, tmdb_collection = ?, series_json = ?, meta_source = 'peer', meta_at = ?, age = COALESCE(age, ?) WHERE id = ?`)
         .run(rt.imdb_id && !db.prepare('SELECT 1 FROM titles WHERE kind = ? AND imdb_id = ? AND id != ?').get(rt.kind, rt.imdb_id, t.id) ? rt.imdb_id : null, rt.tmdb_id,
           rt.overview || '', rt.tagline || '', JSON.stringify(rt.genres || []), JSON.stringify(rt.cast || []), JSON.stringify(rt.directors || []),
           rt.rating, rt.runtime, rt.poster, rt.backdrop, rt.trailer, rt.tmdb_collection ? JSON.stringify(rt.tmdb_collection) : null, JSON.stringify(rt.series || []),
           // Titles we also hold locally keep meta_at empty so our own lookup still runs.
-          db.prepare('SELECT 1 FROM files WHERE title_id = ? AND peer_id IS NULL').get(t.id) ? null : now(), t.id);
+          db.prepare('SELECT 1 FROM files WHERE title_id = ? AND peer_id IS NULL').get(t.id) ? null : now(), [0, 6, 9, 12, 14, 16, 18].includes(rt.age) ? rt.age : null, t.id);
     }
     for (const rf of rt.files || []) {
       let epId = null;
@@ -273,7 +274,7 @@ export default async function routes(app) {
     const peer = db.prepare('SELECT * FROM peers WHERE id = ?').get(req.params.id);
     const rest = req.params['*'];
     // Only ticketed media paths are relayed; they carry their own credential.
-    if (!peer || !/^(stream|hls|subs)\//.test(rest)) throw new HttpError(404, 'Niet gevonden.');
+    if (!peer || !/^(stream|hls|subs|trickplay)\//.test(rest)) throw new HttpError(404, 'Niet gevonden.');
     const qs = req.raw.url.includes('?') ? req.raw.url.slice(req.raw.url.indexOf('?')) : '';
     const ctl = new AbortController();
     req.raw.on('close', () => ctl.abort());

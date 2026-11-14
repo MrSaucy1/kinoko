@@ -87,6 +87,9 @@ export function pruneOrphans() {
 
 export const scanState = { running: false, phase: 'idle', library: '', done: 0, total: 0, startedAt: 0, finishedAt: 0, error: null };
 const afterScan = [];
+const afterToggle = [];
+/** Called when previews are switched on for a library, so they start without waiting for a scan. */
+export const onTrickplayEnabled = (fn) => afterToggle.push(fn);
 /** Other modules (metadata, markers, collections) hook in here. */
 export const onScanFinished = (fn) => afterScan.push(fn);
 
@@ -262,7 +265,7 @@ function cleanPaths(paths) {
 export default async function routes(app) {
   app.get('/api/admin/libraries', { preHandler: requireAdmin }, async () => ({
     libraries: db.prepare('SELECT * FROM libraries ORDER BY id').all().map((l) => ({
-      ...l, paths: json(l.paths, []), shared: !!l.shared,
+      ...l, paths: json(l.paths, []), shared: !!l.shared, trickplay: !!l.trickplay,
       files: db.prepare('SELECT COUNT(*) c FROM files WHERE library_id = ?').get(l.id).c,
       titles: db.prepare('SELECT COUNT(DISTINCT title_id) c FROM files WHERE library_id = ?').get(l.id).c,
     })),
@@ -282,9 +285,10 @@ export default async function routes(app) {
   app.put('/api/admin/libraries/:id', { preHandler: requireAdmin }, async (req) => {
     const lib = db.prepare('SELECT * FROM libraries WHERE id = ?').get(req.params.id);
     if (!lib) throw new HttpError(404, 'Bibliotheek niet gevonden.');
-    const { name = lib.name, paths, shared = !!lib.shared } = req.body || {};
-    db.prepare('UPDATE libraries SET name = ?, paths = ?, shared = ? WHERE id = ?')
-      .run(String(name).trim() || lib.name, paths ? JSON.stringify(cleanPaths(paths)) : lib.paths, shared ? 1 : 0, lib.id);
+    const { name = lib.name, paths, shared = !!lib.shared, trickplay = !!lib.trickplay } = req.body || {};
+    db.prepare('UPDATE libraries SET name = ?, paths = ?, shared = ?, trickplay = ? WHERE id = ?')
+      .run(String(name).trim() || lib.name, paths ? JSON.stringify(cleanPaths(paths)) : lib.paths, shared ? 1 : 0, trickplay ? 1 : 0, lib.id);
+    if (trickplay && !lib.trickplay) for (const fn of afterToggle) fn();
     if (paths) { onLibrariesChanged(); scanAll(); }
     return { ok: true };
   });
