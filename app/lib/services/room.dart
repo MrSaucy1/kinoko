@@ -31,6 +31,10 @@ class WatchRoom extends ChangeNotifier {
   void Function(Json room)? onLoad;
   void Function(String emoji)? onReaction;
 
+  /// Watch Night vote while the room has no film yet; null once a film plays.
+  Json? vote;
+  int? myVote;
+
   void connect() {
     final q = guest != null ? 'guest=${Uri.encodeComponent(guest!)}' : 'token=${Uri.encodeComponent(api.token)}';
     _ch = WebSocketChannel.connect(Uri.parse(api.wsUrl('/api/watch/$code/ws?$q')));
@@ -57,8 +61,13 @@ class WatchRoom extends ChangeNotifier {
         connected = true;
         me = m['you'] as String?;
         members = listOf((m['room'] as Json?)?['members']);
-        log.add(RoomMessage('', 'Je kijkt nu samen. Iedereen kan pauzeren en spoelen.', system: true));
-        if (state != null) onState?.call(state['playing'] == true, numOf(state['position']), null, null);
+        final r = m['room'] as Json?;
+        vote = r?['fileId'] == null ? (r?['vote'] as Json?) : null;
+        for (final c in listOf(m['chat'])) {
+          log.add(RoomMessage((c['from'] ?? '').toString(), (c['text'] ?? '').toString()));
+        }
+        log.add(RoomMessage('', vote != null ? 'Stem op een film; chatten kan alvast.' : 'Je kijkt nu samen. Iedereen kan pauzeren en spoelen.', system: true));
+        if (state != null && vote == null) onState?.call(state['playing'] == true, numOf(state['position']), null, null);
       case 'members':
         members = listOf(m['members']);
         if (m['joined'] != null) log.add(RoomMessage('', '${m['joined']} kijkt mee', system: true));
@@ -67,7 +76,13 @@ class WatchRoom extends ChangeNotifier {
         if (m['byId'] != me && state != null) onState?.call(state['playing'] == true, numOf(state['position']), m['by'] as String?, m['action'] as String?);
       case 'load':
         final room = m['room'] as Json?;
+        if (vote != null && m['winner'] != null) log.add(RoomMessage('', 'Gekozen: ${m['winner']}', system: true));
+        vote = null;
         if (room != null) onLoad?.call(room);
+      case 'vote':
+        if (vote != null) vote = m['vote'] as Json?;
+      case 'slow':
+        log.add(RoomMessage('', 'Rustig aan — je stuurt te snel achter elkaar.', system: true));
       case 'chat':
         log.add(RoomMessage((m['from'] ?? '').toString(), (m['text'] ?? '').toString()));
       case 'react':
@@ -86,6 +101,11 @@ class WatchRoom extends ChangeNotifier {
   void load(int fileId) => _send({'t': 'load', 'fileId': fileId});
   void chat(String text) => _send({'t': 'chat', 'text': text});
   void react(String emoji) => _send({'t': 'react', 'emoji': emoji});
+  void castVote(int titleId) {
+    myVote = titleId;
+    _send({'t': 'vote', 'titleId': titleId});
+    notifyListeners();
+  }
 
   @override
   void dispose() {

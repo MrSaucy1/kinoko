@@ -6,6 +6,7 @@ import '../core/api.dart';
 import '../core/theme.dart';
 import '../widgets/common.dart';
 import 'detail.dart';
+import 'player.dart';
 
 Future<void> openWatchNight(BuildContext context) => Navigator.push(context, PageRouteBuilder(pageBuilder: (_, __, ___) => const WatchNightScreen(), transitionsBuilder: (_, a, __, c) => FadeTransition(opacity: a, child: c), transitionDuration: const Duration(milliseconds: 400)));
 
@@ -39,6 +40,16 @@ class _WatchNightScreenState extends State<WatchNightScreen> with TickerProvider
     _sky.dispose();
     _roll.dispose();
     super.dispose();
+  }
+
+  /// Opens a room in which everyone votes on the three picks; the winner starts for all.
+  Future<void> _voteTogether() async {
+    try {
+      final r = await api.post('/api/watch/vote', {'titleIds': [for (final p in listOf(_data?['picks'])) p['id']]});
+      if (mounted) await openPlayer(context, PlayRequest(roomCode: r['code'].toString()));
+    } catch (e) {
+      if (mounted) showMessage(context, e);
+    }
   }
 
   Future<void> _fetch() async {
@@ -107,6 +118,8 @@ class _WatchNightScreenState extends State<WatchNightScreen> with TickerProvider
                             ]),
                             SizedBox(height: wide ? 22 : 30),
                             KButton(_loading ? 'Dobbelen…' : 'Opnieuw dobbelen', icon: Icons.casino_rounded, primary: true, busy: _loading, autofocus: Device.isTv, onTap: _fetch),
+                            const SizedBox(height: 10),
+                            KButton('Samen stemmen', icon: Icons.how_to_vote_rounded, onTap: _loading ? null : _voteTogether),
                             const SizedBox(height: 12),
                             Text('Gekozen uit ${_data!['poolSize']} films die bij dit moment passen.', style: const TextStyle(color: K.faint, fontSize: 12.5)),
                           ]),

@@ -1,5 +1,5 @@
 import { api, h, state, route, render, go, setView, setToken, act, toast, icon } from './core.js';
-import { homeView, gridView, liveView, openDetail } from './views.js';
+import { homeView, gridView, liveView, openDetail, listsView, listView, wrappedView, sharedWrappedView } from './views.js';
 import { joinRoomView } from './player.js';
 import { adminView, setupView } from './admin.js';
 
@@ -83,6 +83,10 @@ route('/zoeken', guard((_, q) => gridView({ active: 'search', title: `Resultaten
 route('/genre/:name', guard(({ name }, q) => gridView({ active: q.get('kind') || 'home', title: name, load: () => api(`/api/browse?genre=${encodeURIComponent(name)}&sort=rating${q.get('kind') ? `&kind=${q.get('kind')}` : ''}`), lead: (d) => `${d.total} titels` })));
 route('/collectie/:id', guard(({ id }) => gridView({ active: 'home', title: 'Collectie', load: () => api(`/api/collections/${id}`), lead: (d) => `${d.count} films` })));
 route('/titel/:id', guard(async ({ id }) => { const off = await homeView(); openDetail(Number(id)); return off; }));
+route('/lijsten', guard(() => listsView()));
+route('/lijsten/:id', guard((p) => listView(p)));
+route('/wrapped', guard((p, q) => wrappedView(p, q)));
+route('/wrapped/:token', sharedWrappedView);
 route('/beheer', guard(() => adminView({})));
 route('/beheer/:section', guard((p) => adminView(p)));
 

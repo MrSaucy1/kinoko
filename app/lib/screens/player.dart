@@ -68,6 +68,7 @@ class _PlayerScreenState extends State<PlayerScreen> with TickerProviderStateMix
   bool _audioChosen = false;
   int _subOffsetMs = 0;
   double? _previewAt;
+  Timer? _voteTick;
   Timer? _previewTimer;
   Timer? _offsetSave;
   Json? _play;
@@ -146,6 +147,7 @@ class _PlayerScreenState extends State<PlayerScreen> with TickerProviderStateMix
     _report();
     _offsetSave?.cancel();
     _previewTimer?.cancel();
+    _voteTick?.cancel();
     _hideTimer?.cancel();
     _progressTimer?.cancel();
     _toastTimer?.cancel();
@@ -195,6 +197,19 @@ class _PlayerScreenState extends State<PlayerScreen> with TickerProviderStateMix
         await _player.open(Media(Downloads.instance.fileOf(d).uri.toString(), start: _resumeAt(req.resume)));
       } else if (req.roomCode != null) {
         final info = await api.get('/api/watch/${req.roomCode}');
+        if (info['fileId'] == null && info['vote'] != null) {
+          // Watch Night: the room starts with a vote; the film loads when it is decided.
+          _title = 'Watch Night';
+          _subtitle = 'Stem samen op de film';
+          _connectRoom(req.roomCode!);
+          if (mounted) {
+            setState(() {
+              _ready = true;
+              _buffering = false;
+            });
+          }
+          return;
+        }
         _fileId = (info['fileId'] as num).toInt();
         _applyRoomInfo(info);
         if (!_isGuest && info['title'] != null) {
@@ -743,6 +758,13 @@ class _PlayerScreenState extends State<PlayerScreen> with TickerProviderStateMix
         }
       }
       setState(() => _applyRoomInfo(info));
+      if (_detail == null && !_isGuest && info['title'] != null) {
+        try {
+          await _loadDetail(((info['title'] as Json)['id'] as num).toInt(), null);
+        } catch (_) {
+          // Room info alone is enough to watch along.
+        }
+      }
       try {
         await _load(position: 0, autoplay: false);
       } catch (err) {
@@ -760,8 +782,65 @@ class _PlayerScreenState extends State<PlayerScreen> with TickerProviderStateMix
     room.addListener(() {
       if (mounted) setState(() {});
     });
+    _voteTick?.cancel();
+    _voteTick = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted || room.vote == null && room.connected) {
+        if (room.vote == null && room.connected) t.cancel();
+        return;
+      }
+      setState(() {});
+    });
     room.connect();
     setState(() => _room = room);
+  }
+
+  Widget _voteView(Json v) {
+    final options = listOf(v['options']);
+    final counts = (v['counts'] as Json?) ?? const {};
+    final left = math.max(0, ((numOf(v['endsAt']) - DateTime.now().millisecondsSinceEpoch) / 1000).round());
+    return ColoredBox(
+      color: const Color(0xF207050C),
+      child: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(20),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            const Text('Welke film wordt het?', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 6),
+            Text('Iedereen stemt. Bij een meerderheid of als de tijd om is start de winnaar · ${left > 0 ? 'nog $left s' : 'de stemmen worden geteld…'}', textAlign: TextAlign.center, style: const TextStyle(color: K.muted)),
+            const SizedBox(height: 18),
+            Row(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              for (final o in options)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Tappable(
+                    radius: 14,
+                    focusScale: 1.06,
+                    autofocus: Device.isTv && o == options.first,
+                    onTap: () => _room?.castVote((o['id'] as num).toInt()),
+                    child: Container(
+                      width: Device.isTv ? 170 : 120,
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(color: K.surface, borderRadius: BorderRadius.circular(14), border: Border.all(color: _room?.myVote == o['id'] ? K.orchid : K.line, width: 2)),
+                      child: Column(children: [
+                        AspectRatio(aspectRatio: 2 / 3, child: ClipRRect(borderRadius: BorderRadius.circular(8), child: NetImage(o['poster'], fallbackText: (o['title'] ?? '').toString()))),
+                        const SizedBox(height: 6),
+                        Text((o['title'] ?? '').toString(), maxLines: 2, textAlign: TextAlign.center, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                        Text('${counts['${o['id']}'] ?? 0} ${(counts['${o['id']}'] ?? 0) == 1 ? 'stem' : 'stemmen'}', style: const TextStyle(color: K.lilac, fontWeight: FontWeight.w700, fontSize: 12.5)),
+                      ]),
+                    ),
+                  ),
+                ),
+            ]),
+            const SizedBox(height: 18),
+            Row(mainAxisSize: MainAxisSize.min, children: [
+              if (!_isGuest) KButton('Uitnodigen', icon: Icons.link_rounded, onTap: _showInvite),
+              const SizedBox(width: 10),
+              KButton('Sluiten', onTap: () => Navigator.maybePop(context)),
+            ]),
+          ]),
+        ),
+      ),
+    );
   }
 
   Future<void> _startRoom() async {
@@ -840,6 +919,7 @@ class _PlayerScreenState extends State<PlayerScreen> with TickerProviderStateMix
                 ),
                 if (_previewAt != null && _play?['trickplay'] is Map)
                   Positioned(left: 0, right: 0, bottom: Device.isTv ? 150 : 110, child: Center(child: IgnorePointer(child: _TrickThumb(_play!['trickplay'] as Json, _previewAt!)))),
+                if (_room?.vote != null) Positioned.fill(child: _voteView(_room!.vote!)),
                 if (_inIntro && !_isLive) _skipIntro(),
                 if (_upNext) _upNextCard(),
                 for (final r in _reactions) _reactionView(r),

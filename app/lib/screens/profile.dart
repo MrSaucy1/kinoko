@@ -7,6 +7,7 @@ import '../widgets/common.dart';
 import 'admin.dart';
 import 'browse.dart';
 import 'player.dart';
+import 'social.dart';
 import 'watch_night.dart';
 
 /// Asks for a room code and joins that Watch Together session.
@@ -85,6 +86,8 @@ class ProfileScreen extends StatelessWidget {
             const SizedBox(height: 24),
             item(Icons.groups_rounded, 'Samen kijken', 'Doe mee met een code van iemand anders', () => joinRoomDialog(context), autofocus: Device.isTv),
             item(Icons.favorite_rounded, 'Mijn lijst', 'Alles wat je hebt bewaard', () => Navigator.push(context, MaterialPageRoute(builder: (_) => const _MyList()))),
+            item(Icons.playlist_play_rounded, 'Lijsten', 'Eigen lijsten, ook om te delen', () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ListsScreen()))),
+            item(Icons.auto_awesome_rounded, 'Jouw jaar', 'Kinoko Wrapped: uren, top-titels en genres', () => Navigator.push(context, MaterialPageRoute(builder: (_) => const WrappedScreen()))),
             item(Icons.casino_rounded, 'Watch Night', 'Dobbel voor drie films die bij het seizoen passen', () => openWatchNight(context)),
             item(Icons.devices_rounded, 'Apparaten', 'Waar je account is ingelogd; log een apparaat uit', () => Navigator.push(context, MaterialPageRoute(builder: (_) => const _Devices()))),
             item(Icons.verified_user_rounded, 'Tweestapsverificatie', u['twoFactor'] == true ? 'Staat aan' : 'Extra code bij het inloggen', () => Navigator.push(context, MaterialPageRoute(builder: (_) => const _TwoFactor()))),
@@ -322,4 +325,3 @@ class _TwoFactorState extends State<_TwoFactor> {
   }
 }
 
-List<Object?> listOf2(Object? v) => v is List ? v : const [];

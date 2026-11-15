@@ -27,7 +27,7 @@ export async function startPlayback(opts) {
   let detail = null, episodes = [], episode = null, versions = [];
   let fileId = opts.fileId || null, quality = opts.quality || 'original', audio = 0;
   let play = null, hls = null, ws = null, closed = false;
-  let subOffset = 0, offsetTimer = null, audioChosen = false;
+  let subOffset = 0, offsetTimer = null, audioChosen = false, voting = null, voteEl = null, voteTick = null, myVote = null;
   let suppress = false, upnextShown = false, upnextDismissed = false, countdown = null, idleTimer = null, progressTimer = null;
 
   const video = h('video', { playsInline: true, preload: 'auto', crossOrigin: 'anonymous' });
@@ -315,12 +315,15 @@ export async function startPlayback(opts) {
     let me = null;
     ws.onmessage = async (ev) => {
       const m = JSON.parse(ev.data);
-      if (m.t === 'hello') { me = m.you; drawMembers(m.room.members); applyState(m.state); sys('Je kijkt nu samen. Iedereen kan pauzeren en spoelen.'); }
+      if (m.t === 'hello') { me = m.you; drawMembers(m.room.members); if (!voting) applyState(m.state); for (const c of m.chat || []) log.append(h('div.msg', h('b', c.from), c.text)); sys(voting ? 'Stem op een film; chatten kan alvast.' : 'Je kijkt nu samen. Iedereen kan pauzeren en spoelen.'); }
+      else if (m.t === 'vote') { if (voting) drawVote(m.vote); }
+      else if (m.t === 'slow') note('Rustig aan — je stuurt te snel achter elkaar.');
       else if (m.t === 'members') { drawMembers(m.members); if (m.joined) sys(`${m.joined} kijkt mee`); if (m.left) sys(`${m.left} is weg`); }
       else if (m.t === 'state') {
         if (m.byId !== me) { applyState(m.state); note(`${m.by} ${m.action === 'play' ? 'speelt af' : m.action === 'pause' ? 'pauzeert' : 'spoelt naar ' + fmtTime(m.state.position)}`); }
       } else if (m.t === 'load') {
         fileId = m.room.fileId; quality = 'original';
+        if (voting) { endVote(); note(`Gekozen: ${m.winner || m.room.title?.title || ''}`); if (!isGuest && m.room.title) { try { await loadDetail(m.room.title.id); } catch { /* room info is enough */ } } }
         if (m.room.title) { detail = { ...(detail || {}), id: m.room.title.id, title: m.room.title.title, year: m.room.title.year }; }
         if (m.room.episode) { episode = episodes.find((e) => e.id === m.room.episode.id) || m.room.episode; if (episode.versions) versions = episode.versions; }
         sys(`${m.by} start ${m.room.episode ? `S${m.room.episode.season} A${m.room.episode.episode}` : 'een andere versie'}`);
@@ -331,6 +334,22 @@ export async function startPlayback(opts) {
     ws.onclose = () => { if (!closed) sys('Verbinding verbroken.'); };
     function drawMembers(list) { memberBox.replaceChildren(list.map((u) => h(`div.avatar.${u.avatar}`, { title: u.name + (u.guest ? ' (gast)' : '') }, u.name[0]))); }
   }
+
+  // Watch Night vote: three picks, everyone in the room chooses, the winner starts for all.
+  function drawVote(v) {
+    voting = v;
+    clearInterval(voteTick);
+    if (voteEl) voteEl.remove();
+    const left = h('b');
+    const tick = () => { const s = Math.max(0, Math.round((v.endsAt - Date.now()) / 1000)); left.textContent = s > 0 ? `nog ${s} s` : 'de stemmen worden geteld…'; };
+    tick(); voteTick = setInterval(tick, 1000);
+    voteEl = h('div.vote', h('div.vote-in', h('h2', 'Welke film wordt het?'), h('p.muted', 'Iedereen in de kamer stemt. Bij een meerderheid of als de tijd om is start de winnaar voor iedereen · ', left),
+      h('div.vote-opts', v.options.map((o) => h(`button.vote-opt${myVote === o.id ? '.on' : ''}`, { onclick: () => { myVote = o.id; if (ws && ws.readyState === 1) ws.send(JSON.stringify({ t: 'vote', titleId: o.id })); drawVote(voting); } },
+        o.poster ? h('img', { src: o.poster, alt: '' }) : h('div.fallback', o.title), h('b', o.title), h('small', `${v.counts[o.id] || 0} ${(v.counts[o.id] || 0) === 1 ? 'stem' : 'stemmen'}`)))),
+      !isGuest && h('div.row', { style: { justifyContent: 'center', marginTop: '18px' } }, h('button.btn', { onclick: () => inviteDialog(room.code) }, icon('link'), 'Mensen uitnodigen'))));
+    stage.append(voteEl);
+  }
+  function endVote() { clearInterval(voteTick); if (voteEl) { voteEl.remove(); voteEl = null; } voting = null; }
 
   async function startRoom() {
     if (room) return inviteDialog(room.code);
@@ -353,7 +372,7 @@ export async function startPlayback(opts) {
   }
   document.addEventListener('keydown', onKey);
   function cleanup() {
-    clearInterval(progressTimer); clearInterval(countdown); clearTimeout(idleTimer); clearTimeout(offsetTimer);
+    clearInterval(progressTimer); clearInterval(countdown); clearInterval(voteTick); clearTimeout(idleTimer); clearTimeout(offsetTimer);
     document.removeEventListener('keydown', onKey);
     if (ws) { ws.onclose = null; ws.close(); }
     if (hls) hls.destroy();
@@ -376,6 +395,7 @@ export async function startPlayback(opts) {
       // The room decides what plays; account holders also get the full detail for versions/next episode.
       const info = await api(`/api/watch/${room.code}`);
       fileId = info.fileId; detail = info.title; episode = info.episode;
+      if (!fileId && info.vote) voting = info.vote;
       if (!isGuest && info.title) { try { await loadDetail(info.title.id, info.episode && info.episode.id); } catch { /* guest-level info is enough */ } }
       autoplay = false;
     } else {
@@ -383,9 +403,9 @@ export async function startPlayback(opts) {
       if (!fileId) fileId = versions[0] && versions[0].fileId;
       if (!position && !opts.episodeId && detail.kind === 'movie' && opts.resume === undefined && detail.progress && !detail.progress.watched) position = detail.progress.position;
     }
-    if (!fileId) throw new Error('Er is geen afspeelbare versie van deze titel.');
-    await load(position, autoplay);
-    if (room) connectRoom();
+    if (!fileId && !voting) throw new Error('Er is geen afspeelbare versie van deze titel.');
+    if (voting) { spinner(false); title.textContent = 'Watch Night'; sub.textContent = 'Stem samen op de film'; connectRoom(); drawVote(voting); }
+    else { await load(position, autoplay); if (room) connectRoom(); }
   } catch (e) { toast(e.message, 'bad'); closed = true; cleanup(); if (room) go('/'); }
 
   async function loadDetail(titleId, episodeId) {

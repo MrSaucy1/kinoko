@@ -1,5 +1,5 @@
 // Browsing: shell, home, grids, title detail, Watch Night, Live TV.
-import { api, h, icon, state, go, setView, openModal, mountLayer, toast, act, setToken, fmtRuntime, fmtBitrate, fmtSize, fmtTime, fmtDate, copyText, qrSvg } from './core.js';
+import { api, h, icon, state, go, setView, openModal, mountLayer, toast, act, setToken, fmtRuntime, fmtBitrate, fmtSize, fmtTime, fmtDate, copyText, qrSvg, confirmDialog } from './core.js';
 import { startPlayback, playChannel, playExtra } from './player.js';
 
 // ---------------------------------------------------------------------------
@@ -35,6 +35,8 @@ export function shell(active, ...content) {
       h('div', { style: { padding: '8px 12px 10px' } }, h('b', state.user.name), h('div.faint', { style: { fontSize: '12.5px' } }, state.info.name)),
       h('hr'),
       state.user.role === 'admin' && h('a', { href: '/beheer' }, icon('gear'), 'Beheer'),
+      h('a', { href: '/lijsten' }, icon('layers'), 'Lijsten'),
+      h('a', { href: '/wrapped' }, icon('dice'), 'Jouw jaar'),
       h('button', { onclick: passwordDialog }, icon('tag'), 'Wachtwoord wijzigen'),
       h('button', { onclick: devicesDialog }, icon('tv'), 'Apparaten'),
       h('button', { onclick: twoFactorDialog }, icon('check'), 'Tweestapsverificatie'),
@@ -373,6 +375,7 @@ export async function openDetail(id) {
   }
 
   if (d.cast.length) body.append(h('div.d-section', h('h3', 'Cast'), h('div.cast', d.cast.slice(0, 16).map((c) => h('div', h('div.ph', c.photo ? h('img', { src: c.photo, alt: '', loading: 'lazy' }) : c.name[0]), h('b', c.name), c.role && h('small', c.role))))));
+  actions.append(h('button.icon-btn', { title: 'Aan een lijst toevoegen', 'aria-label': 'Aan een lijst toevoegen', onclick: () => addToListDialog(d) }, icon('layers')));
   if (d.extras && d.extras.length) body.append(h('div.d-section', h('h3', "Extra's"), h('div.extras', d.extras.map((x) => h('button.extra', { onclick: () => playExtra(x) }, icon('play'), h('span.grow', h('b', x.name), h('small', x.label)), x.duration ? h('small', fmtTime(x.duration)) : null)))));
   if (d.similar.length) body.append(h('div.d-section', h('h3', 'Meer zoals dit'), h('div.d-similar', d.similar.map((c) => { const t = tile(c); t.addEventListener('click', () => m.close(), { capture: true }); return t; }))));
 }
@@ -426,7 +429,7 @@ export async function openWatchNight() {
   const el = h('div.wn', { style: { '--wn-a': data.theme.colors[0] + '55', '--wn-b': data.theme.colors[0], '--wn-c': data.theme.colors[1] } }, canvas,
     h('button.icon-btn.wn-close', { 'aria-label': 'Sluiten', onclick: () => close() }, icon('x')),
     h('div.wn-inner', h('div.wn-eyebrow', 'Watch Night'), h('h1', data.theme.name), h('p', data.theme.tagline), cards,
-      h('div.row', { style: { justifyContent: 'center' } }, rollBtn), h('p.faint', { style: { marginTop: '18px', fontSize: '13px' } }, `Gekozen uit ${data.poolSize} films die bij dit moment passen.`)));
+      h('div.row.wrap', { style: { justifyContent: 'center' } }, rollBtn, h('button.btn.lg', { title: 'Open een kamer waarin iedereen op één van deze drie stemt', onclick: (e) => act(e.currentTarget, async () => { const r = await api('/api/watch/vote', { method: 'POST', body: { titleIds: data.picks.map((p) => p.id) } }); close(); go(r.path); }) }, icon('users'), 'Samen stemmen')), h('p.faint', { style: { marginTop: '18px', fontSize: '13px' } }, `Gekozen uit ${data.poolSize} films die bij dit moment passen.`)));
   const unmount = mountLayer(el);
   const onKey = (e) => { if (e.key === 'Escape') close(); };
   document.addEventListener('keydown', onKey);
@@ -454,6 +457,105 @@ export async function openWatchNight() {
     });
   }
   roll(true);
+}
+
+// ---------------------------------------------------------------------------
+// Shared lists
+// ---------------------------------------------------------------------------
+async function addToListDialog(d) {
+  const box = h('div.stack', { style: { gap: '8px' } });
+  const name = h('input.input', { placeholder: 'Nieuwe lijst…', maxLength: 60 });
+  async function draw() {
+    const r = await api(`/api/lists?title=${d.id}`);
+    const mine = r.lists.filter((l) => l.canEdit);
+    box.replaceChildren(...(mine.length ? mine.map((l) => h('label.device', h('input', { type: 'checkbox', checked: l.has, onchange: (e) => act(null, async () => { await api(`/api/lists/${l.id}/items/${d.id}`, { method: e.target.checked ? 'PUT' : 'DELETE' }); toast(e.target.checked ? `Toegevoegd aan ${l.name}` : `Verwijderd uit ${l.name}`); }) }),
+      h('div.grow', h('b', l.name), h('div.faint', l.mine ? `${l.count} titels` : `van ${l.owner}`)))) : [h('p.muted', 'Je hebt nog geen lijsten.')]));
+  }
+  openModal(h('div.stack', h('h2', 'Aan een lijst toevoegen'), box, h('form.row', { onsubmit: (e) => { e.preventDefault(); act(e.submitter, async () => { const r = await api('/api/lists', { method: 'POST', body: { name: name.value } }); await api(`/api/lists/${r.id}/items/${d.id}`, { method: 'PUT' }); name.value = ''; toast('Lijst gemaakt'); await draw(); }); } }, name, h('button.btn.primary', 'Maken'))), { small: true });
+  draw().catch((e) => toast(e.message, 'bad'));
+}
+
+export async function listsView() {
+  const grid = h('div.lists');
+  const off = shell('lists', h('div.page', h('h1', 'Lijsten'), h('p.lead', 'Maak lijsten en deel ze met anderen op deze server — om samen te vullen of alleen om te bekijken.'),
+    h('div.row', { style: { marginBottom: '20px' } }, h('button.btn.primary', { onclick: async () => { const n = prompt('Naam van de lijst'); if (n && n.trim()) act(null, async () => { const r = await api('/api/lists', { method: 'POST', body: { name: n } }); go(`/lijsten/${r.id}`); }); } }, icon('plus'), 'Nieuwe lijst')), grid));
+  try {
+    const d = await api('/api/lists');
+    grid.replaceChildren(...(d.lists.length ? d.lists.map((l) => h('a.list-card', { href: `/lijsten/${l.id}` }, h('div.fan', l.posters.map((p) => h('img', { src: p, alt: '', loading: 'lazy' }))),
+      h('b', l.name), h('small', `${l.count} titels · ${l.mine ? (l.shared ? `gedeeld met ${l.shared}` : 'alleen jij') : `van ${l.owner}`}`))) : [h('p.muted', 'Nog geen lijsten. Maak er een, of voeg vanaf een titel iets toe.')]));
+  } catch (e) { toast(e.message, 'bad'); }
+  return off;
+}
+
+export async function listView({ id }) {
+  const main = h('div.page');
+  const off = shell('lists', main);
+  async function draw() {
+    let d; try { d = await api(`/api/lists/${id}`); } catch (e) { main.replaceChildren(h('div.empty', h('h2', 'Lijst niet gevonden'), h('p', e.message), h('a.btn', { href: '/lijsten' }, 'Naar lijsten'))); return; }
+    const grid = h('div.grid', d.items.map((c) => { const t = tile(c); if (d.canEdit) t.append(h('span.tile-x', { role: 'button', title: 'Uit de lijst halen', onclick: (e) => { e.stopPropagation(); act(null, async () => { await api(`/api/lists/${id}/items/${c.id}`, { method: 'DELETE' }); draw(); }); } }, icon('x'))); return t; }));
+    main.replaceChildren(h('h1', d.name), h('p.lead', `${d.count} titels · ${d.mine ? 'jouw lijst' : `van ${d.owner}${d.canEdit ? ' · je mag bewerken' : ' · alleen bekijken'}`}`),
+      h('div.row.wrap', { style: { marginBottom: '20px' } },
+        d.mine && h('button.btn', { onclick: () => shareDialog(d, draw) }, icon('users'), d.shares.length ? `Gedeeld met ${d.shares.length}` : 'Delen'),
+        d.mine && h('button.btn', { onclick: () => { const n = prompt('Nieuwe naam', d.name); if (n && n.trim()) act(null, async () => { await api(`/api/lists/${id}`, { method: 'PUT', body: { name: n } }); draw(); }); } }, 'Hernoemen'),
+        h('button.btn.danger', { onclick: async () => { if (await confirmDialog(d.mine ? 'Lijst verwijderen?' : 'Lijst verlaten?', d.mine ? `"${d.name}" verdwijnt voor iedereen.` : 'De lijst verdwijnt uit jouw overzicht.', d.mine ? 'Verwijderen' : 'Verlaten')) { await api(`/api/lists/${id}`, { method: 'DELETE' }); go('/lijsten'); } } }, d.mine ? 'Verwijderen' : 'Verlaten')),
+      d.items.length ? grid : h('p.muted', 'Deze lijst is nog leeg. Open een titel en kies het lijst-icoon.'));
+  }
+  await draw();
+  return off;
+}
+
+async function shareDialog(d, after) {
+  const dir = (await api('/api/users/directory')).users;
+  const cur = new Map(d.shares.map((s) => [s.id, s.edit]));
+  const rows = dir.map((u) => { const on = h('input', { type: 'checkbox', checked: cur.has(u.id) }), edit = h('input', { type: 'checkbox', checked: cur.get(u.id) === true }); return { u, on, edit }; });
+  const m = openModal(h('form.stack', { onsubmit: (e) => { e.preventDefault(); act(e.submitter, async () => { await api(`/api/lists/${d.id}/shares`, { method: 'PUT', body: { users: rows.filter((r) => r.on.checked).map((r) => ({ id: r.u.id, edit: r.edit.checked })) } }); toast('Opgeslagen'); m.close(); after(); }); } },
+    h('h2', `"${d.name}" delen`), rows.length ? h('div.stack', { style: { gap: '8px' } }, rows.map((r) => h('div.device', h('label.row.grow', r.on, h('b', r.u.name)), h('label.row', r.edit, h('span.faint', 'mag bewerken'))))) : h('p.muted', 'Er zijn nog geen andere gebruikers op deze server.'),
+    h('button.btn.primary', 'Opslaan')), { small: true });
+}
+
+// ---------------------------------------------------------------------------
+// Kinoko Wrapped
+// ---------------------------------------------------------------------------
+const hoursText = (sec) => (sec >= 3600 ? `${(sec / 3600).toFixed(1).replace('.', ',')} uur` : `${Math.round(sec / 60)} min`);
+function wrappedCards(w) {
+  if (w.empty) return h('div.empty', h('h2', `Nog niets gekeken in ${w.year}`), h('p', 'Zodra je kijkt, bouwt je jaaroverzicht zich vanzelf op.'));
+  const max = Math.max(1, ...w.months);
+  const m = w.music && !w.music.empty ? w.music : null;
+  return h('div.wr-grid',
+    h('div.wr-card.big', h('small', `${w.name} · ${w.year}`), h('b.wr-num', hoursText(w.seconds)), h('span', `gekeken op ${w.days} ${w.days === 1 ? 'dag' : 'dagen'} · ${w.movies} films · ${w.shows} series`),
+      h('div.wr-months', w.months.map((s, i) => h('i', { title: ['jan', 'feb', 'mrt', 'apr', 'mei', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec'][i], style: { height: `${6 + (s / max) * 54}px` } })))),
+    w.topTitles.length ? h('div.wr-card', h('small', 'Meest gekeken'), h('div.wr-top', w.topTitles.map((t, i) => h('div', h('span.wr-rank', String(i + 1)), t.poster ? h('img', { src: t.poster, alt: '' }) : h('span'), h('div.grow', h('b', t.title), h('small', hoursText(t.seconds))))))) : null,
+    w.topGenres.length ? h('div.wr-card', h('small', 'Jouw genres'), w.topGenres.map((g) => h('div.wr-bar', h('span', g.name), h('i', { style: { width: `${Math.max(4, g.share)}%` } }), h('small', `${g.share}%`)))) : null,
+    w.longestSession ? h('div.wr-card', h('small', 'Langste kijksessie'), h('b.wr-num', hoursText(w.longestSession.seconds)), h('span', `${w.longestSession.title} · ${new Date(`${w.longestSession.day}T12:00:00`).toLocaleDateString('nl-NL', { day: 'numeric', month: 'long' })}`)) : null,
+    w.favoriteDay ? h('div.wr-card', h('small', 'Favoriete kijkdag'), h('b.wr-num', w.favoriteDay.name), h('span', `${hoursText(w.favoriteDay.seconds)} in totaal`)) : null,
+    m ? h('div.wr-card.big', h('small', 'Muziek'), h('b.wr-num', `${Math.round(m.seconds / 60)} min`), h('span', `geluisterd · ${m.tracks} nummers · ${m.artists} artiesten`)) : null,
+    m && m.topArtists.length ? h('div.wr-card', h('small', 'Meest geluisterde artiesten'), h('div.wr-top', m.topArtists.map((a, i) => h('div', h('span.wr-rank', String(i + 1)), h('div.grow', h('b', a.name), h('small', `${Math.round(a.seconds / 60)} min`)))))) : null,
+    m && m.topTracks.length ? h('div.wr-card', h('small', 'Meest gedraaide nummers'), h('div.wr-top', m.topTracks.map((t, i) => h('div', h('span.wr-rank', String(i + 1)), h('div.grow', h('b', t.title), h('small', `${t.artist} · ${t.plays}×`)))))) : null,
+    m && m.topGenres.length ? h('div.wr-card', h('small', 'Muziekgenres'), m.topGenres.map((g) => h('div.wr-bar', h('span', g.name), h('i', { style: { width: `${Math.max(4, g.share)}%` } }), h('small', `${g.share}%`)))) : null);
+}
+
+export async function wrappedView(_, query) {
+  const main = h('div.page.wr');
+  const off = shell('wrapped', main);
+  async function draw(year) {
+    let w; try { w = await api(`/api/wrapped${year ? `?year=${year}` : ''}`); } catch (e) { return toast(e.message, 'bad'); }
+    const years = [...new Set([w.year, ...w.years])].sort((a, b) => b - a);
+    const url = w.sharePath ? location.origin + w.sharePath : null;
+    main.replaceChildren(h('div.row.wrap', h('h1.grow', 'Jouw jaar'), years.length > 1 && h('select.input', { style: { width: 'auto' }, onchange: (e) => draw(e.target.value) }, years.map((y) => h('option', { value: y, selected: y === w.year }, y)))),
+      h('p.lead', 'Alleen jij ziet dit, tot je het zelf deelt.'), wrappedCards(w),
+      !w.empty && h('div.card-box.stack', { style: { marginTop: '22px' } }, url
+        ? [h('p.muted', 'Iedereen met deze link kan je overzicht zien, ook zonder account.'), h('div.codebox', h('span.grow', url), h('button.btn.sm', { onclick: () => copyText(url, 'Link gekopieerd') }, icon('copy'))), h('div.row', h('button.btn.danger', { onclick: (e) => act(e.currentTarget, async () => { await api(`/api/wrapped/share?year=${w.year}`, { method: 'DELETE' }); toast('Niet meer gedeeld'); draw(w.year); }) }, 'Stoppen met delen'))]
+        : [h('div.row', h('button.btn.primary', { onclick: (e) => act(e.currentTarget, async () => { await api('/api/wrapped/share', { method: 'POST', body: { year: w.year } }); draw(w.year); }) }, icon('link'), 'Deellink maken'))]));
+  }
+  await draw(query.get('jaar'));
+  return off;
+}
+
+export async function sharedWrappedView({ token }) {
+  let w;
+  try { w = await api(`/api/wrapped/shared/${encodeURIComponent(token)}`); }
+  catch (e) { setView(h('div.auth', h('div.auth-card', h('div.logo', h('span', 'Kinoko')), h('h1', 'Niet beschikbaar'), h('p', e.message)))); return; }
+  setView(h('main.view.page.wr', { style: { paddingTop: '40px' } }, h('div.logo', h('span', 'Kinoko')), h('h1', `Het jaar van ${w.name}`), h('p.lead', `${w.year} in cijfers.`), wrappedCards(w)));
 }
 
 // ---------------------------------------------------------------------------

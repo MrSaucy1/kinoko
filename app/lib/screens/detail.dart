@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../core/api.dart';
 import '../core/theme.dart';
 import '../services/downloads.dart';
+import 'social.dart';
 import '../widgets/cards.dart';
 import '../widgets/common.dart';
 import '../widgets/trailer.dart';
@@ -159,6 +160,7 @@ class _DetailScreenState extends State<DetailScreen> {
             RoundIcon(d['inList'] == true ? Icons.check_rounded : Icons.add_rounded, tooltip: 'Mijn lijst', active: d['inList'] == true, onTap: () => _toggleList(d)),
             if (_fileId != null || nextUp != null)
               RoundIcon(Icons.groups_rounded, tooltip: 'Samen kijken', onTap: () => _together(isMovie ? _fileId! : (listOf(nextUp!['versions']).first['fileId'] as num).toInt())),
+            RoundIcon(Icons.playlist_add_rounded, tooltip: 'Aan een lijst toevoegen', onTap: () => addToListSheet(context, d)),
             if (isMovie && curVersion != null && !Device.isTv) RoundIcon(Icons.download_rounded, tooltip: 'Downloaden', onTap: () => _download(d, curVersion)),
           ]),
           const SizedBox(height: 16),
