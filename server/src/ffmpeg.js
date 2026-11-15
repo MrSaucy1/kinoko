@@ -1,6 +1,7 @@
 // ffprobe + hardware-acceleration detection.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import path from 'node:path';
 import { config } from './config.js';
 import { settings } from './db.js';
 
@@ -21,6 +22,16 @@ export function run(bin, args, { timeout = 60_000, input = null, maxBuffer = 64 
     });
     if (input) child.stdin.end(input); else child.stdin.end();
   });
+}
+
+// Looks the program up in PATH itself; no shell is involved, so a name can never be run as a command.
+export function which(bin) {
+  if (!/^[A-Za-z0-9._+-]+$/.test(String(bin))) return false;
+  for (const dir of (process.env.PATH || '').split(path.delimiter)) {
+    if (!dir) continue;
+    try { const f = path.join(dir, bin); if (fs.statSync(f).isFile()) { fs.accessSync(f, fs.constants.X_OK); return true; } } catch { /* not here */ }
+  }
+  return false;
 }
 
 let available = null;

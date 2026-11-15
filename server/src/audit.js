@@ -6,7 +6,7 @@ export const ACTIONS = {
   'login.ok': 'Ingelogd', 'login.fail': 'Mislukte inlogpoging', 'user.create': 'Gebruiker aangemaakt', 'user.delete': 'Gebruiker verwijderd',
   'user.update': 'Gebruiker gewijzigd', 'user.password': 'Wachtwoord gewijzigd', 'settings.change': 'Instelling gewijzigd', 'peer.link': 'Server gekoppeld',
   'peer.unlink': 'Server ontkoppeld', update: 'Kinoko bijgewerkt', '2fa.enable': 'Tweestapsverificatie aangezet', '2fa.disable': 'Tweestapsverificatie uitgezet',
-  '2fa.reset': 'Tweestapsverificatie gereset door beheerder', 'backup.create': 'Back-up gemaakt', 'backup.download': 'Back-up gedownload',
+  '2fa.reset': 'Tweestapsverificatie gereset door beheerder', 'stream.stop': 'Stream gestopt', 'request.decide': 'Verzoek beoordeeld', 'backup.create': 'Back-up gemaakt', 'backup.download': 'Back-up gedownload',
 };
 
 /** Anything that could carry line breaks or control characters is flattened before it is stored or logged. */

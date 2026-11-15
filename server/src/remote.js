@@ -6,20 +6,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { settings, HttpError } from './db.js';
 import { config } from './config.js';
-import { run } from './ffmpeg.js';
+import { run, which } from './ffmpeg.js';
 import { requireAdmin } from './auth.js';
 import { audit } from './audit.js';
 import { publicUrl } from './federation.js';
 
-// Looks the program up in PATH itself; no shell is involved, so a name can never be run as a command.
-export function which(bin) {
-  if (!/^[A-Za-z0-9._+-]+$/.test(String(bin))) return false;
-  for (const dir of (process.env.PATH || '').split(path.delimiter)) {
-    if (!dir) continue;
-    try { const f = path.join(dir, bin); if (fs.statSync(f).isFile()) { fs.accessSync(f, fs.constants.X_OK); return true; } } catch { /* not here */ }
-  }
-  return false;
-}
+export { which };
 const helperAvailable = () => fs.existsSync(config.helper);
 
 async function helper(args, timeout = 180_000) {

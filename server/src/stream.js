@@ -11,6 +11,7 @@ import { notifyUser } from './events.js';
 import { emit } from './webhooks.js';
 import { requireFile, requireTitle, scopeFor, canSeeExtra } from './access.js';
 import { logWatch } from './watchlog.js';
+import { trackPlay, touchPlay, setStopper } from './activity.js';
 
 export const SEG = 4; // seconds per HLS segment
 export const QUALITIES = {
@@ -25,11 +26,15 @@ export const QUALITIES = {
 // managers can't always send headers, so the ticket in the URL is the credential.
 // ---------------------------------------------------------------------------
 const tickets = new Map();
+let issued = null;   // while set: every ticket handed out is noted, so a stream can be cut later
 export function issueTicket(fileId, hours = 12) {
   const t = randomToken(24);
   tickets.set(t, { fileId, expires: Date.now() + hours * 3600_000 });
+  if (issued) issued.push(t);
   return t;
 }
+/** Runs fn and returns its result together with the tickets it issued. */
+function collectTickets(fn) { issued = []; try { return [fn(), issued]; } finally { issued = null; } }
 /** The library file a valid ticket stands for, or null. */
 export function ticketFile(ticket) { const t = tickets.get(ticket); return t && t.fileId && t.expires > Date.now() ? t.fileId : null; }
 /** A ticket for a bonus file (extras table) instead of a library file. */
@@ -224,6 +229,15 @@ setInterval(() => {
   }
 }, 3000).unref();
 
+/** For the admin dashboard. */
+export const transcodeSessions = () => [...sessions.values()].map((s) => ({ id: s.id.slice(0, 6), file: path.basename(s.file), height: s.height, pipeline: s.pipeline, hdr: s.hdr, running: !!s.proc, paused: s.paused }));
+// Cutting a stream: the transcode ends and every link that was handed out for it stops working.
+setStopper((p) => {
+  const s = p.hlsId && sessions.get(p.hlsId);
+  if (s) closeSession(s);
+  for (const t of p.tickets || []) tickets.delete(t);
+});
+
 export function cleanupTranscodes() {
   for (const s of [...sessions.values()]) closeSession(s);
   try { for (const d of fs.readdirSync(dataPath('transcode'))) fs.rmSync(dataPath('transcode', d), { recursive: true, force: true }); } catch { /* nothing to clean */ }
@@ -348,12 +362,14 @@ export default async function routes(app) {
     const body = req.body || {};
     const file = requireFile(req.user, body.fileId);
     const lim = applyLimit(file, body, limitFor(req.user));
-    let play;
+    let play, mine = [];
     if (file.peer_id) {
       if (!remotePlayer) throw new HttpError(500, 'Gekoppelde servers zijn niet beschikbaar.');
       play = await remotePlayer(file, lim.body);
-    } else play = playLocal(file, lim.body);
+    } else [play, mine] = collectTickets(() => playLocal(file, lim.body));
     announcePlayback(req.user, file);
+    // Asking only for the download link (the detail page does) is not a stream.
+    if (body.track !== false) trackPlay(req.user, tokenFromRequest(req), file, play, mine);
     const off = db.prepare('SELECT offset_ms FROM sub_offsets WHERE user_id = ? AND file_id = ?').get(req.user.id, file.id);
     return { ...stripOriginal(play, lim.capped), subOffsetMs: off ? off.offset_ms : 0 };
   });
@@ -389,6 +405,7 @@ export default async function routes(app) {
     db.prepare(`INSERT INTO progress (user_id, title_id, episode_id, position, duration, watched, updated_at) VALUES (?,?,?,?,?,?,?)
       ON CONFLICT(user_id, title_id, episode_id) DO UPDATE SET position = excluded.position, duration = excluded.duration,
       watched = excluded.watched, updated_at = excluded.updated_at`).run(...key, pos, Number(duration) || 0, flag, now());
+    touchPlay(req.user.id, tokenFromRequest(req), key[1], key[2], pos, duration, paused);
     // Paused here: offer to continue on the user's other open devices.
     if (paused === true && !flag && pos > 30) {
       const t = db.prepare('SELECT id, kind, title FROM titles WHERE id = ?').get(Number(titleId));
@@ -403,7 +420,7 @@ export default async function routes(app) {
     const { detectHardware } = await import('./ffmpeg.js');
     return {
       hardware: await detectHardware(), choice: settings.get('hwaccel', 'auto'), active: (await activeBackend()).id,
-      sessions: [...sessions.values()].map((s) => ({ id: s.id.slice(0, 6), file: path.basename(s.file), height: s.height, pipeline: s.pipeline, hdr: s.hdr, running: !!s.proc, paused: s.paused })),
+      sessions: transcodeSessions(),
     };
   });
   app.put('/api/admin/transcoding', { preHandler: requireAdmin }, async (req) => {

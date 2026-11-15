@@ -12,11 +12,12 @@ export function register(userId, entry) {
 }
 
 /** Sends to every open client of this user, optionally skipping the session that caused it. Returns how many got it. */
-export function notifyUser(userId, msg, { exceptSession = null } = {}) {
+export function notifyUser(userId, msg, { exceptSession = null, onlySession = null } = {}) {
   let n = 0;
   const data = JSON.stringify(msg);
   for (const e of sockets.get(userId) || []) {
     if (exceptSession && e.session === exceptSession) continue;
+    if (onlySession && e.session !== onlySession) continue;
     try { if (e.socket.readyState === 1) { e.socket.send(data); n++; } } catch { /* socket is closing */ }
   }
   return n;
