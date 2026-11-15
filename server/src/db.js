@@ -304,6 +304,53 @@ export const MIGRATIONS = [
     addColumn(d, 'files', 'trickplay', 'TEXT');                             // JSON once generated, 'none' when it failed
     d.exec('CREATE INDEX IF NOT EXISTS titles_age ON titles(age)');
   },
+  // 4 — fase 4: shared lists, watch history per day (for Wrapped), Wrapped share links.
+  (d) => {
+    d.exec(`
+      CREATE TABLE IF NOT EXISTS lists (
+        id INTEGER PRIMARY KEY,
+        owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS lists_owner ON lists(owner_id);
+      CREATE TABLE IF NOT EXISTS list_items (
+        list_id INTEGER NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
+        title_id INTEGER NOT NULL REFERENCES titles(id) ON DELETE CASCADE,
+        added_by INTEGER,
+        added_at INTEGER NOT NULL,
+        ord INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (list_id, title_id)
+      );
+      CREATE TABLE IF NOT EXISTS list_shares (
+        list_id INTEGER NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        can_edit INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (list_id, user_id)
+      );
+      CREATE INDEX IF NOT EXISTS list_shares_user ON list_shares(user_id);
+      CREATE TABLE IF NOT EXISTS watch_log (
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        title_id INTEGER NOT NULL REFERENCES titles(id) ON DELETE CASCADE,
+        episode_id INTEGER NOT NULL DEFAULT 0,
+        day TEXT NOT NULL,                       -- YYYY-MM-DD, server time
+        seconds REAL NOT NULL DEFAULT 0,
+        PRIMARY KEY (user_id, title_id, episode_id, day)
+      );
+      CREATE INDEX IF NOT EXISTS watch_log_user_day ON watch_log(user_id, day);
+      CREATE TABLE IF NOT EXISTS wrapped_shares (
+        token TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        year INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        UNIQUE (user_id, year)
+      );
+    `);
+    // What was watched before this version: one entry per title/episode on the day it was last touched.
+    d.exec(`INSERT OR IGNORE INTO watch_log (user_id, title_id, episode_id, day, seconds)
+      SELECT user_id, title_id, episode_id, date(updated_at, 'unixepoch', 'localtime'), CASE WHEN watched = 1 THEN duration ELSE position END
+      FROM progress WHERE (CASE WHEN watched = 1 THEN duration ELSE position END) > 0`);
+  },
 ];
 
 export function migrate(database = db, steps = MIGRATIONS) {
