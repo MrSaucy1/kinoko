@@ -118,9 +118,9 @@ async function walk(dir, out, extras = [], extraKind = null, extraBase = null) {
 }
 
 /** Links bonus files to the title they sit next to. Runs after the main files of the library are in. */
-async function scanExtras(lib, roots, found) {
+async function scanExtras(lib, roots, found, only = null) {
   const like = (dir) => dir.replace(/[\\%_]/g, '\\$&') + path.sep + '%';
-  const existing = new Map(db.prepare('SELECT id, path, size, mtime FROM extras WHERE library_id = ?').all(lib.id).map((r) => [r.path, r]));
+  const existing = new Map(db.prepare('SELECT id, path, size, mtime FROM extras WHERE library_id = ?').all(lib.id).filter((r) => !only || r.path.startsWith(only + path.sep)).map((r) => [r.path, r]));
   const seen = new Set();
   for (const x of found) {
     let st; try { st = await fs.promises.stat(x.file); } catch { continue; }
@@ -155,19 +155,21 @@ async function scanExtras(lib, roots, found) {
   }
 }
 
-async function scanLibrary(lib) {
+/** `only`: limit the scan to this folder inside the library (a webhook said something changed there). */
+async function scanLibrary(lib, only = null) {
   const roots = json(lib.paths, []);
   const found = [], extras = [];
   for (const root of roots) {
+    if (only && only !== root && !only.startsWith(root + path.sep)) continue;
     const list = [];
-    await walk(root, list, extras);
+    await walk(only || root, list, extras);
     for (const f of list) found.push({ file: f, root });
   }
   // A root that is unreachable (unmounted share) must not wipe its files.
   const reachable = roots.filter((r) => { try { return fs.statSync(r).isDirectory(); } catch { return false; } });
   scanState.library = lib.name; scanState.total += found.length;
 
-  const existing = new Map(db.prepare('SELECT id, path, size, mtime FROM files WHERE peer_id IS NULL AND library_id = ?').all(lib.id).map((r) => [r.path, r]));
+  const existing = new Map(db.prepare('SELECT id, path, size, mtime FROM files WHERE peer_id IS NULL AND library_id = ?').all(lib.id).filter((r) => !only || r.path.startsWith(only + path.sep)).map((r) => [r.path, r]));
   const seen = new Set();
   for (const { file, root } of found) {
     seen.add(file);
@@ -209,7 +211,7 @@ async function scanLibrary(lib) {
     if (seen.has(p)) continue;
     if (reachable.some((r) => p.startsWith(r + path.sep))) db.prepare('DELETE FROM files WHERE id = ?').run(row.id);
     else if (!roots.some((r) => p.startsWith(r + path.sep))) db.prepare('DELETE FROM files WHERE id = ?').run(row.id); // path removed from library
-  }  await scanExtras(lib, roots, extras);
+  }  await scanExtras(lib, roots, extras, only);
 }
 
 /** Tells the webhooks what a scan brought in. */
@@ -220,18 +222,34 @@ function announce(since) {
   emit('scan.finished', { text: `Scan klaar: ${scanState.total} bestanden bekeken, ${added.length} nieuwe ${added.length === 1 ? 'titel' : 'titels'}.`, fields: { files: scanState.total, added: added.length } });
 }
 
+/**
+ * Scans one folder right away (Sonarr/Radarr just put something there).
+ * Returns 'path' when the folder lies inside a library, 'full' when it does
+ * not and everything is scanned instead.
+ */
+export function scanPath(p) {
+  let dir = path.resolve(String(p));
+  try { if (fs.statSync(dir).isFile()) dir = path.dirname(dir); } catch { dir = path.extname(dir) ? path.dirname(dir) : dir; }
+  const inside = db.prepare('SELECT paths FROM libraries').all().some((l) => json(l.paths, []).some((r) => dir === r || dir.startsWith(r + path.sep)));
+  scanAll(inside && fs.existsSync(dir) ? { only: dir } : {});
+  return inside ? 'path' : 'full';
+}
+
 /** Set by index.js: called whenever the set of library folders changes. */
 let onLibrariesChanged = () => {};
 export const setLibrariesChanged = (fn) => { onLibrariesChanged = fn; };
 
 let rescan = false;
-export async function scanAll() {
+export async function scanAll({ only = null } = {}) {
   // A request during a running scan (e.g. a second library was just added) queues one more pass.
   if (scanState.running) { rescan = true; return false; }
   Object.assign(scanState, { running: true, phase: 'scan', library: '', done: 0, total: 0, startedAt: now(), error: null });
   try {
     if (!(await ffmpegAvailable())) scanState.error = 'ffmpeg/ffprobe niet gevonden — bestanden worden zonder technische details toegevoegd.';
-    for (const lib of db.prepare('SELECT * FROM libraries ORDER BY id').all()) await scanLibrary(lib);
+    for (const lib of db.prepare('SELECT * FROM libraries ORDER BY id').all()) {
+      if (only && !json(lib.paths, []).some((r) => only === r || only.startsWith(r + path.sep))) continue;
+      await scanLibrary(lib, only);
+    }
     pruneOrphans();
     for (const fn of afterScan) {
       try { await fn(scanState); } catch (e) { console.error('[scan] na-stap mislukt:', e); }

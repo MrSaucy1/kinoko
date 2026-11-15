@@ -351,6 +351,30 @@ export const MIGRATIONS = [
       SELECT user_id, title_id, episode_id, date(updated_at, 'unixepoch', 'localtime'), CASE WHEN watched = 1 THEN duration ELSE position END
       FROM progress WHERE (CASE WHEN watched = 1 THEN duration ELSE position END) > 0`);
   },
+  // 5 — fase 5: requests for films and series.
+  (d) => {
+    d.exec(`
+      CREATE TABLE IF NOT EXISTS requests (
+        id INTEGER PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL CHECK (kind IN ('movie','show')),
+        title TEXT NOT NULL,
+        year INTEGER,
+        imdb_id TEXT,
+        tmdb_id INTEGER,
+        poster TEXT,
+        overview TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','declined','available')),
+        note TEXT NOT NULL DEFAULT '',
+        forwarded TEXT NOT NULL DEFAULT '',          -- '', 'radarr', 'sonarr' or an error text
+        created_at INTEGER NOT NULL,
+        decided_at INTEGER,
+        decided_by INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS requests_user ON requests(user_id);
+      CREATE INDEX IF NOT EXISTS requests_status ON requests(status, id);
+    `);
+  },
 ];
 
 export function migrate(database = db, steps = MIGRATIONS) {
