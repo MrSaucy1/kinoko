@@ -86,6 +86,9 @@ export function pruneOrphans() {
 // ---------------------------------------------------------------------------
 
 export const scanState = { running: false, phase: 'idle', library: '', done: 0, total: 0, startedAt: 0, finishedAt: 0, error: null };
+const scanners = {};
+/** A module that owns a library type registers how to scan it. */
+export const registerScanner = (type, fn) => { scanners[type] = fn; };
 const afterScan = [];
 const afterToggle = [];
 /** Called when previews are switched on for a library, so they start without waiting for a scan. */
@@ -248,7 +251,9 @@ export async function scanAll({ only = null } = {}) {
     if (!(await ffmpegAvailable())) scanState.error = 'ffmpeg/ffprobe niet gevonden — bestanden worden zonder technische details toegevoegd.';
     for (const lib of db.prepare('SELECT * FROM libraries ORDER BY id').all()) {
       if (only && !json(lib.paths, []).some((r) => only === r || only.startsWith(r + path.sep))) continue;
-      await scanLibrary(lib, only);
+      // Other kinds of library (music) bring their own scanner.
+      if (scanners[lib.type]) await scanners[lib.type](lib, only, scanState);
+      else await scanLibrary(lib, only);
     }
     pruneOrphans();
     for (const fn of afterScan) {
@@ -284,8 +289,8 @@ export default async function routes(app) {
   app.get('/api/admin/libraries', { preHandler: requireAdmin }, async () => ({
     libraries: db.prepare('SELECT * FROM libraries ORDER BY id').all().map((l) => ({
       ...l, paths: json(l.paths, []), shared: !!l.shared, trickplay: !!l.trickplay,
-      files: db.prepare('SELECT COUNT(*) c FROM files WHERE library_id = ?').get(l.id).c,
-      titles: db.prepare('SELECT COUNT(DISTINCT title_id) c FROM files WHERE library_id = ?').get(l.id).c,
+      files: l.type === 'music' ? db.prepare('SELECT COUNT(*) c FROM tracks WHERE library_id = ?').get(l.id).c : db.prepare('SELECT COUNT(*) c FROM files WHERE library_id = ?').get(l.id).c,
+      titles: l.type === 'music' ? db.prepare('SELECT COUNT(DISTINCT album_id) c FROM tracks WHERE library_id = ?').get(l.id).c : db.prepare('SELECT COUNT(DISTINCT title_id) c FROM files WHERE library_id = ?').get(l.id).c,
     })),
     scan: scanState,
   }));
@@ -293,7 +298,7 @@ export default async function routes(app) {
   app.post('/api/admin/libraries', { preHandler: requireAdmin }, async (req) => {
     const { name, type, paths, shared = true } = req.body || {};
     if (!String(name || '').trim()) throw new HttpError(400, 'Geef de bibliotheek een naam.');
-    if (!['movies', 'shows'].includes(type)) throw new HttpError(400, 'Kies films of series.');
+    if (!['movies', 'shows', 'music'].includes(type)) throw new HttpError(400, 'Kies films, series of muziek.');
     const info = db.prepare('INSERT INTO libraries (name, type, paths, shared, created_at) VALUES (?,?,?,?,?)')
       .run(String(name).trim(), type, JSON.stringify(cleanPaths(paths)), shared ? 1 : 0, now());
     onLibrariesChanged(); scanAll();

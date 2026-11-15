@@ -375,12 +375,161 @@ export const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS requests_status ON requests(status, id);
     `);
   },
+  // 6 — fase 6: music. The libraries table gets a third type; its CHECK cannot be altered in
+  // place, so the table is rebuilt with every row and id intact (see `fkOff` in migrate()).
+  {
+    fkOff: true,
+    run: (d) => {
+      d.exec(`
+        CREATE TABLE libraries_new (
+          id INTEGER PRIMARY KEY,
+          name TEXT NOT NULL,
+          type TEXT NOT NULL CHECK (type IN ('movies','shows','music')),
+          paths TEXT NOT NULL DEFAULT '[]',
+          shared INTEGER NOT NULL DEFAULT 1,
+          created_at INTEGER NOT NULL,
+          trickplay INTEGER NOT NULL DEFAULT 0
+        );
+        INSERT INTO libraries_new (id, name, type, paths, shared, created_at, trickplay) SELECT id, name, type, paths, shared, created_at, trickplay FROM libraries;
+        DROP TABLE libraries;
+        ALTER TABLE libraries_new RENAME TO libraries;
+
+        CREATE TABLE IF NOT EXISTS artists (
+          id INTEGER PRIMARY KEY,
+          name TEXT NOT NULL,
+          norm TEXT NOT NULL UNIQUE,
+          mbid TEXT,
+          image TEXT,
+          bio TEXT NOT NULL DEFAULT '',
+          meta_at INTEGER
+        );
+        CREATE TABLE IF NOT EXISTS albums (
+          id INTEGER PRIMARY KEY,
+          title TEXT NOT NULL,
+          norm TEXT NOT NULL,
+          artist_id INTEGER NOT NULL REFERENCES artists(id) ON DELETE CASCADE,
+          year INTEGER,
+          mbid TEXT,
+          cover TEXT,
+          meta_at INTEGER,
+          added_at INTEGER NOT NULL,
+          UNIQUE (artist_id, norm)
+        );
+        CREATE INDEX IF NOT EXISTS albums_added ON albums(added_at);
+        CREATE INDEX IF NOT EXISTS albums_norm ON albums(norm);
+        CREATE TABLE IF NOT EXISTS album_artists (
+          album_id INTEGER NOT NULL REFERENCES albums(id) ON DELETE CASCADE,
+          artist_id INTEGER NOT NULL REFERENCES artists(id) ON DELETE CASCADE,
+          PRIMARY KEY (album_id, artist_id)
+        );
+        CREATE INDEX IF NOT EXISTS album_artists_artist ON album_artists(artist_id);
+        CREATE TABLE IF NOT EXISTS tracks (
+          id INTEGER PRIMARY KEY,
+          library_id INTEGER REFERENCES libraries(id) ON DELETE CASCADE,
+          peer_id INTEGER REFERENCES peers(id) ON DELETE CASCADE,
+          remote_id INTEGER,
+          album_id INTEGER NOT NULL REFERENCES albums(id) ON DELETE CASCADE,
+          artist_id INTEGER NOT NULL REFERENCES artists(id) ON DELETE CASCADE,
+          title TEXT NOT NULL,
+          norm TEXT NOT NULL,
+          track_no INTEGER NOT NULL DEFAULT 0,
+          disc_no INTEGER NOT NULL DEFAULT 1,
+          duration REAL NOT NULL DEFAULT 0,
+          path TEXT NOT NULL,
+          size INTEGER NOT NULL DEFAULT 0,
+          mtime INTEGER NOT NULL DEFAULT 0,
+          codec TEXT NOT NULL DEFAULT '',
+          container TEXT NOT NULL DEFAULT '',
+          bitrate INTEGER NOT NULL DEFAULT 0,
+          sample_rate INTEGER NOT NULL DEFAULT 0,
+          channels INTEGER NOT NULL DEFAULT 2,
+          year INTEGER,
+          explicit INTEGER NOT NULL DEFAULT 0,
+          mb_track_id TEXT,
+          rg_track_gain REAL, rg_track_peak REAL, rg_album_gain REAL, rg_album_peak REAL,
+          has_cover INTEGER NOT NULL DEFAULT 0,
+          added_at INTEGER NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS tracks_local ON tracks(path) WHERE peer_id IS NULL;
+        CREATE UNIQUE INDEX IF NOT EXISTS tracks_remote ON tracks(peer_id, remote_id) WHERE peer_id IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS tracks_album ON tracks(album_id, disc_no, track_no);
+        CREATE INDEX IF NOT EXISTS tracks_artist ON tracks(artist_id);
+        CREATE INDEX IF NOT EXISTS tracks_norm ON tracks(norm);
+        CREATE INDEX IF NOT EXISTS tracks_added ON tracks(added_at);
+        CREATE INDEX IF NOT EXISTS tracks_library ON tracks(library_id);
+        CREATE TABLE IF NOT EXISTS genres (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE);
+        CREATE TABLE IF NOT EXISTS track_genres (
+          track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+          genre_id INTEGER NOT NULL REFERENCES genres(id) ON DELETE CASCADE,
+          PRIMARY KEY (track_id, genre_id)
+        );
+        CREATE INDEX IF NOT EXISTS track_genres_genre ON track_genres(genre_id);
+        CREATE TABLE IF NOT EXISTS playlists (
+          id INTEGER PRIMARY KEY,
+          owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          name TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS playlists_owner ON playlists(owner_id);
+        CREATE TABLE IF NOT EXISTS playlist_items (
+          id INTEGER PRIMARY KEY,
+          playlist_id INTEGER NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
+          track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+          ord INTEGER NOT NULL,
+          added_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS playlist_items_list ON playlist_items(playlist_id, ord);
+        CREATE TABLE IF NOT EXISTS playlist_shares (
+          playlist_id INTEGER NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          can_edit INTEGER NOT NULL DEFAULT 0,
+          PRIMARY KEY (playlist_id, user_id)
+        );
+        CREATE INDEX IF NOT EXISTS playlist_shares_user ON playlist_shares(user_id);
+        CREATE TABLE IF NOT EXISTS music_likes (
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+          at INTEGER NOT NULL,
+          PRIMARY KEY (user_id, track_id)
+        );
+        CREATE INDEX IF NOT EXISTS music_likes_at ON music_likes(user_id, at);
+        CREATE TABLE IF NOT EXISTS music_plays (
+          id INTEGER PRIMARY KEY,
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+          at INTEGER NOT NULL,
+          seconds REAL NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS music_plays_user ON music_plays(user_id, at);
+        CREATE INDEX IF NOT EXISTS music_plays_track ON music_plays(track_id);
+        CREATE TABLE IF NOT EXISTS music_queue (
+          user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+          items TEXT NOT NULL DEFAULT '[]',
+          idx INTEGER NOT NULL DEFAULT 0,
+          position REAL NOT NULL DEFAULT 0,
+          updated_at INTEGER NOT NULL
+        );
+      `);
+    },
+  },
 ];
 
 export function migrate(database = db, steps = MIGRATIONS) {
   const from = database.pragma('user_version', { simple: true });
   for (let i = from; i < steps.length; i++) {
-    database.transaction(() => { steps[i](database); database.pragma(`user_version = ${i + 1}`); })();
+    const step = steps[i], fn = typeof step === 'function' ? step : step.run;
+    // A step that rebuilds a table other tables point at (`fkOff`) follows SQLite's own recipe:
+    // foreign keys off around the transaction, and a check that every reference still holds before it commits.
+    const fkOff = typeof step === 'object' && step.fkOff === true;
+    if (fkOff) database.pragma('foreign_keys = OFF');
+    try {
+      database.transaction(() => {
+        fn(database);
+        if (fkOff && database.pragma('foreign_key_check').length) throw new Error(`migratie ${i + 1}: verwijzingen kloppen niet meer`);
+        database.pragma(`user_version = ${i + 1}`);
+      })();
+    } finally { if (fkOff) database.pragma('foreign_keys = ON'); }
   }
   return database.pragma('user_version', { simple: true });
 }
