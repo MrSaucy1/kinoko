@@ -30,7 +30,8 @@ install/  Proxmox-helperscript, installer en de root-beheerhulp
 | **Downloads** | In de mobiele app, hervatbaar, offline af te spelen. |
 | **Watch Night** | Thema op basis van seizoen/feestdag en drie gedobbelde films. Samen stemmen: de winnaar start voor iedereen in de kamer. |
 | **Lijsten** | Lijsten met een naam, te delen met andere gebruikers om te bekijken of samen te vullen. |
-| **Jouw jaar** | Kinoko Wrapped: uren, top-titels, genres, langste sessie en favoriete kijkdag. Privé, tot je zelf een deellink maakt. |
+| **Jouw jaar** | Kinoko Wrapped: één jaaroverzicht voor video en muziek — uren, top-titels, genres, langste sessie, favoriete kijkdag, top-artiesten en -nummers. Privé, tot je zelf een deellink maakt. |
+| **Widgets** | Android-widgets voor het startscherm: Kinoko Music met het huidige nummer, hoes en afspelen/pauzeren/volgende; Kinoko met "Verder kijken". |
 | **Muziek** | Eigen muziekbibliotheek: tags en hoezen uit de bestanden, ontbrekende hoezen en artiestfoto's optioneel via MusicBrainz/Cover Art Archive/Wikidata. Albums, artiesten, genres, zoeken met typfouten, playlists (privé of gedeeld), likes, wachtrij en geschiedenis. Afspelen in het origineel of omgezet naar Opus/AAC (96/160/320 kbps). |
 | **Kinoko Music** | Muziek-app in Spotify-stijl: home met dagmixen, zoeken, bibliotheek, album- en artiestpagina's, speler met wachtrij, shuffle/herhalen, liken, playlists maken en delen. Naadloos afspelen en overvloeien, volume gelijktrekken (ReplayGain), meescrollende songteksten, radio en doorspelen, offline downloads, aparte kwaliteit voor wifi en mobiel, scrobbelen naar ListenBrainz/Last.fm, en Kinoko Connect (afspelen overzetten naar een ander apparaat). Android Auto met spraakzoeken. |
 | **Live tv** | Xtream Codes of M3U, één keer ingesteld door de beheerder. |
