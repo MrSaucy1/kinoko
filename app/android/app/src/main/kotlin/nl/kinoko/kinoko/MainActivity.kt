@@ -23,5 +23,15 @@ class MainActivity : FlutterActivity() {
                 result.notImplemented()
             }
         }
+        // Android TV: the rows on the home screen (a no-op in the phone variant).
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "kinoko/tvhome").setMethodCallHandler { call, result ->
+            if (call.method == "update") {
+                val data = call.arguments as? Map<*, *>
+                if (data != null) TvHome.update(this, data)
+                result.success(null)
+            } else {
+                result.notImplemented()
+            }
+        }
     }
 }

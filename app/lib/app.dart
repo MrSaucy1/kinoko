@@ -8,6 +8,7 @@ import 'package:media_kit/media_kit.dart';
 import 'core/api.dart';
 import 'core/theme.dart';
 import 'screens/browse.dart';
+import 'screens/detail.dart';
 import 'screens/downloads.dart';
 import 'screens/home.dart';
 import 'screens/live.dart';
@@ -97,6 +98,12 @@ class _KinokoAppState extends State<KinokoApp> {
   void _onLink(Uri uri) {
     final code = uri.pathSegments.isNotEmpty ? uri.pathSegments.last : '';
     final ctx = _navigator.currentContext;
+    // kinoko://title/ID — a card on the Android TV home screen.
+    if (uri.host == 'title' && ctx != null && api.signedIn) {
+      final id = int.tryParse(code);
+      if (id != null) openDetail(ctx, id);
+      return;
+    }
     if (!RegExp(r'^[A-Za-z0-9]{6}$').hasMatch(code) || ctx == null || !api.signedIn) return;
     joinRoomDialog(ctx, code: code);
   }

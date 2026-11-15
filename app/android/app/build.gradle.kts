@@ -79,3 +79,8 @@ kotlin {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // Rows on the Android TV home screen ("Verder kijken", "Nieuw"); only in the TV variant.
+    "tvImplementation"("androidx.tvprovider:tvprovider:1.0.0")
+}

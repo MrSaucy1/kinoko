@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:kinoko_core/home_widget.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -28,7 +29,21 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<Json> _fetch() async {
     final d = await api.get('/api/home${_kind != null ? '?kind=$_kind' : ''}');
     if (_kind == null && !Device.isTv) unawaited(_feedWidget(d));
+    if (_kind == null && Device.isTv) unawaited(_feedTvHome(d));
     return d;
+  }
+
+  /// Android TV: the rows "Verder kijken" and "Nieuw" on the TV's own home screen.
+  Future<void> _feedTvHome(Json d) async {
+    List<Json> cards(String id) => [
+          for (final c in listOf(listOf(d['rows']).where((r) => r['id'] == id).firstOrNull?['items']).take(12))
+            {'id': '${c['id']}', 'title': c['title'].toString(), 'subtitle': (c['resume'] as Json?)?['episodeId'] != null ? 'S${(c['resume'] as Json)['season']} · A${(c['resume'] as Json)['episode']}' : (c['year']?.toString() ?? ''), 'poster': api.abs(c['poster']) ?? ''}
+        ];
+    try {
+      await const MethodChannel('kinoko/tvhome').invokeMethod<void>('update', {'continue': cards('continue'), 'recent': cards('recent')});
+    } catch (_) {
+      // Not a TV with a home-screen provider: nothing to fill.
+    }
   }
 
   /// The home-screen widget shows what the "Verder kijken" row starts with.
