@@ -10,6 +10,10 @@ dependencies:
   flutter:
     sdk: flutter
 
+  # Gedeeld met de Kinoko Music-app: API-client, thema, basiswidgets
+  kinoko_core:
+    path: ../packages/kinoko_core
+
   # Netwerk & opslag
   http: ^1.2.2
   shared_preferences: ^2.3.2
