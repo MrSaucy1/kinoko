@@ -176,3 +176,4 @@ Keuzes:
 Open / niet getest:
 - Geen toestel, geen auto: achtergrondafspelen, melding, Android Auto en spraak zijn alleen op code-niveau gecontroleerd.
 - Eigen icoon voor Kinoko Music ontbreekt.
+- **De build zelf is niet geverifieerd.** Het token van deze werkomgeving mag geen workflow starten (`HTTP 403` op `workflow_dispatch`). Start in GitHub → Actions → Build → "Run workflow" op de branch `feat/music-app` (of een latere fase): die run bouwt alle drie de APK's zonder een release te maken.
