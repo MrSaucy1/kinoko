@@ -16,6 +16,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      # The tests that scan, convert and tone-map real files are skipped without ffmpeg.
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
       - run: npm ci
       - run: npm test
 
@@ -61,6 +63,9 @@ jobs:
           keyPassword=$KEYSTORE_KEY_PASSWORD
           keyAlias=$KEYSTORE_KEY_ALIAS
           EOF
+          # Kinoko Music is signed with the same key.
+          cp android/app/upload-keystore.jks ../music/android/app/upload-keystore.jks
+          cp android/key.properties ../music/android/key.properties
 
       - run: flutter pub get
       - run: flutter analyze
@@ -72,6 +77,18 @@ jobs:
       # TV boxes and Chromecasts are often 32-bit, so the TV build carries both ABIs.
       - name: Build TV APK
         run: flutter build apk --release --flavor tv -t lib/main_tv.dart --target-platform android-arm,android-arm64
+
+      # Kinoko Music: its own app in music/, sharing packages/kinoko_core with the one above.
+      - name: Check Kinoko Music
+        working-directory: music
+        run: |
+          flutter pub get
+          flutter analyze
+          flutter test
+
+      - name: Build Kinoko Music APK
+        working-directory: music
+        run: flutter build apk --release --target-platform android-arm64
 
       - name: Read version from pubspec
         id: version
@@ -87,8 +104,12 @@ jobs:
           cp "$out/app-mobile-release.apk" "dist/$repo-v$v.apk"
           cp "$out/app-tv-release.apk" "dist/app-tv-release.apk"
           cp "$out/app-tv-release.apk" "dist/$repo-tv-v$v.apk"
+          mv=$(grep '^version:' ../music/pubspec.yaml | tr -d ' ' | cut -d':' -f2 | cut -d'+' -f1)
+          cp ../music/build/app/outputs/flutter-apk/app-release.apk "dist/$repo-music-v$mv.apk"
 
+      # Only main publishes; a manual run on another branch just proves that everything builds.
       - name: Publish release
+        if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
@@ -98,4 +119,5 @@ jobs:
 
             - **Telefoon/tablet:** `${{ github.event.repository.name }}-v${{ steps.version.outputs.version }}.apk`
             - **Android TV:** `${{ github.event.repository.name }}-tv-v${{ steps.version.outputs.version }}.apk`
+            - **Kinoko Music (telefoon, Android Auto):** `${{ github.event.repository.name }}-music-vX.Y.Z.apk`
           files: app/dist/*.apk
