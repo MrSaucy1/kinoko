@@ -44,7 +44,7 @@ export function connectEvents() {
   if (!state.token || (events && eventsFor === state.token && events.readyState <= 1)) return;
   if (events) { events.onclose = null; events.close(); }
   eventsFor = state.token;
-  const ws = events = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/events/ws?token=${encodeURIComponent(state.token)}&device=Web`);
+  const ws = events = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/events/ws?token=${encodeURIComponent(state.token)}&device=Web&player=1`);
   const beat = setInterval(() => { if (ws.readyState === 1) ws.send('ping'); }, 40_000);
   ws.onmessage = (ev) => {
     let m; try { m = JSON.parse(ev.data); } catch { return; }
@@ -63,6 +63,9 @@ function resumeOffer(m) {
   document.body.append(el);
   setTimeout(() => el.remove(), 30_000);
 }
+
+// Other modules (the music player) send through the same socket.
+window.addEventListener('kinoko:send', (e) => { if (events && events.readyState === 1) events.send(JSON.stringify(e.detail)); });
 
 const guard = (fn) => (params, query) => {
   if (state.info.needsSetup) { go('/setup', { replace: true }); return undefined; }

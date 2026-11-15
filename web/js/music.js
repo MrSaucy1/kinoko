@@ -43,8 +43,8 @@ function ensureBar() {
     if ('mediaSession' in navigator) navigator.mediaSession.metadata = new MediaMetadata({ title: t.title, artist: t.artist, album: t.album, artwork: t.cover ? [{ src: t.cover }] : [] });
   }
   P.draw = draw;
-  a.addEventListener('play', () => { playBtn.replaceChildren(icon('pause')); P.lastTick = Date.now(); });
-  a.addEventListener('pause', () => playBtn.replaceChildren(icon('play')));
+  a.addEventListener('play', () => { playBtn.replaceChildren(icon('pause')); P.lastTick = Date.now(); reportState(); });
+  a.addEventListener('pause', () => { playBtn.replaceChildren(icon('play')); reportState(); });
   a.addEventListener('timeupdate', () => {
     const n = Date.now(); if (!a.paused && n - P.lastTick < 2000) P.listened += (n - P.lastTick) / 1000; P.lastTick = n;
     fill.style.width = a.duration ? `${(a.currentTime / a.duration) * 100}%` : '0'; time.textContent = `${fmt(a.currentTime)} / ${fmt(a.duration || (P.queue[P.index] || {}).duration)}`;
@@ -78,6 +78,23 @@ function step(d, ended = false) {
   if (n >= P.queue.length) { if (ended) { report(); P.audio.pause(); } return; }
   start(n);
 }
+// Kinoko Connect: this browser is a player the user's other devices can see and control.
+function reportState() {
+  const t = P.queue[P.index];
+  window.dispatchEvent(new CustomEvent('kinoko:send', { detail: { t: 'player', state: { trackId: t ? t.id : null, title: t ? t.title : '', artist: t ? t.artist : '', cover: t ? t.cover : null, playing: !!(P.audio && !P.audio.paused), position: P.audio ? P.audio.currentTime : 0, duration: t ? t.duration : 0 } } }));
+}
+document.addEventListener('kinoko:track', reportState);
+setInterval(() => { if (P.audio && !P.audio.paused) reportState(); }, 10_000);
+window.addEventListener('kinoko:event', (e) => {
+  const m = e.detail;
+  if (!m || m.t !== 'control') return;
+  if (m.cmd === 'load' && Array.isArray(m.items) && m.items.length) { P.queue = m.items; start(Math.min(m.index || 0, m.items.length - 1), m.position || 0, m.play !== false); return; }
+  if (!P.audio) return;
+  if (m.cmd === 'play') P.audio.play().catch(() => {}); else if (m.cmd === 'pause') P.audio.pause(); else if (m.cmd === 'next') step(1); else if (m.cmd === 'previous') step(-1);
+  else if (m.cmd === 'seek') P.audio.currentTime = m.position || 0; else if (m.cmd === 'volume') P.audio.volume = Math.max(0, Math.min(1, m.volume));
+  setTimeout(reportState, 300);
+});
+
 /** Replaces the queue with these tracks and starts at `index`. */
 export function playTracks(tracks, index = 0) { if (!tracks.length) return; P.queue = tracks.slice(); start(index); }
 export function playNext(track) { if (P.index < 0) return playTracks([track]); P.queue.splice(P.index + 1, 0, track); saveQueue(); toast('Speelt hierna'); }

@@ -220,8 +220,9 @@ function markersSection() {
 function musicSection() {
   const box = h('div.section');
   async function draw() {
-    let d; try { d = await api('/api/admin/music'); } catch { return; }
+    let d, x; try { d = await api('/api/admin/music'); x = await api('/api/admin/music/extras'); } catch { return; }
     if (!d.counts.tracks && !d.counts.albums) { box.replaceChildren(); return; }
+    const lfKey = h('input.input', { placeholder: 'Last.fm API-sleutel', value: x.lastfmKey, autocomplete: 'off' }), lfSecret = h('input.input', { placeholder: x.lastfmSecret ? 'Geheim is ingesteld' : 'Last.fm gedeeld geheim', type: 'password', autocomplete: 'off' });
     const cache = h('input.input', { type: 'number', min: 100, max: 500000, value: d.cacheMb, style: { maxWidth: '130px' } });
     box.replaceChildren(h('h2', 'Muziek'), h('div.card-box.stack',
       h('div.row.wrap', h('span.chip', `${d.counts.artists} artiesten`), h('span.chip', `${d.counts.albums} albums`), h('span.chip', `${d.counts.tracks} nummers`), h('span.chip', `${d.counts.noCover} albums zonder hoes`)),
@@ -229,6 +230,12 @@ function musicSection() {
       h('label.row', h('span.switch', h('input', { type: 'checkbox', checked: d.online, onchange: (e) => act(null, async () => { await api('/api/admin/music', { method: 'PUT', body: { online: e.target.checked } }); toast('Opgeslagen'); }) }), h('i')), h('span', 'Ontbrekende hoezen en artiestinfo online opzoeken')),
       d.state.running && h('div.note', `Bezig met opzoeken: ${d.state.done}/${d.state.total}`),
       h('label.field', h('span', 'Ruimte voor omgezette nummers (MB). Wie een lagere kwaliteit kiest, krijgt een omgezette kopie; de oudste worden vanzelf opgeruimd.'), h('div.row', cache, h('button.btn', { onclick: (e) => act(e.currentTarget, async () => { await api('/api/admin/music', { method: 'PUT', body: { cacheMb: Number(cache.value) } }); toast('Opgeslagen'); }) }, 'Opslaan'))),
+      h('label.row', h('span.switch', h('input', { type: 'checkbox', checked: x.loudness, onchange: (e) => act(null, async () => { await api('/api/admin/music/extras', { method: 'PUT', body: { loudness: e.target.checked } }); toast('Opgeslagen'); }) }), h('i')), h('span', `Volume meten voor nummers zonder ReplayGain (op de achtergrond; nog ${x.unmeasured} te gaan)`)),
+      x.loudnessState.running && h('div.note', `Volume meten: ${x.loudnessState.done}/${x.loudnessState.total}`),
+      h('label.row', h('span.switch', h('input', { type: 'checkbox', checked: x.lyricsOnline, onchange: (e) => act(null, async () => { await api('/api/admin/music/extras', { method: 'PUT', body: { lyricsOnline: e.target.checked } }); toast('Opgeslagen'); }) }), h('i')), h('span', 'Songteksten online opzoeken bij LRCLIB (gratis, zonder sleutel)')),
+      h('label.field', h('span', 'Last.fm (optioneel): voor scrobbelen door gebruikers en voor vergelijkbare artiesten bij radio. Sleutel en geheim maak je aan op last.fm/api.'),
+        h('div.row.wrap', lfKey, lfSecret, h('button.btn', { onclick: (e) => act(e.currentTarget, async () => { await api('/api/admin/music/extras', { method: 'PUT', body: { lastfmKey: lfKey.value, lastfmSecret: lfSecret.value } }); toast('Opgeslagen'); draw(); }) }, 'Opslaan'),
+          x.lastfmKey && h('button.btn.danger', { onclick: (e) => act(e.currentTarget, async () => { await api('/api/admin/music/extras', { method: 'PUT', body: { clearLastfm: true } }); draw(); }) }, 'Wissen'))),
       d.counts.noCover > 0 && d.online && h('div.row', h('button.btn', { onclick: (e) => act(e.currentTarget, async () => { await api('/api/admin/music', { method: 'PUT', body: { retry: true } }); toast('Opnieuw zoeken gestart'); draw(); }) }, 'Ontbrekende hoezen opnieuw zoeken'))));
   }
   draw();
