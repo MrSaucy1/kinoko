@@ -9,6 +9,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 import '../core/api.dart';
 import '../core/theme.dart';
 import '../services/downloads.dart';
+import '../services/events.dart';
 import '../services/room.dart';
 import '../widgets/common.dart';
 
@@ -117,6 +118,13 @@ class _PlayerScreenState extends State<PlayerScreen> with TickerProviderStateMix
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     }
     _subs.addAll([
+      // The admin ended this stream: say so and leave.
+      ServerEvents.instance.stream.listen((m) {
+        if (m['t'] != 'stopped' || _room != null || _isOffline || !mounted) return;
+        final nav = Navigator.of(context), messenger = ScaffoldMessenger.maybeOf(context);
+        nav.maybePop();
+        messenger?.showSnackBar(SnackBar(content: Text((m['message'] ?? 'De beheerder heeft deze stream gestopt.').toString())));
+      }),
       _player.stream.position.listen(_onPosition),
       _player.stream.duration.listen((d) => setState(() => _dur = d)),
       _player.stream.playing.listen((p) => setState(() => _playing = p)),

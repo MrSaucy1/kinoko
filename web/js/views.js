@@ -37,6 +37,7 @@ export function shell(active, ...content) {
       state.user.role === 'admin' && h('a', { href: '/beheer' }, icon('gear'), 'Beheer'),
       h('a', { href: '/lijsten' }, icon('layers'), 'Lijsten'),
       h('a', { href: '/wrapped' }, icon('dice'), 'Jouw jaar'),
+      !state.user.kids && h('a', { href: '/verzoeken' }, icon('plus'), 'Iets aanvragen'),
       h('button', { onclick: passwordDialog }, icon('tag'), 'Wachtwoord wijzigen'),
       h('button', { onclick: devicesDialog }, icon('tv'), 'Apparaten'),
       h('button', { onclick: twoFactorDialog }, icon('check'), 'Tweestapsverificatie'),
@@ -328,7 +329,7 @@ export async function openDetail(id) {
     m.close(); go(`/w/${r.code}`);
   });
   const download = (fileId) => act(null, async () => {
-    const p = await api('/api/play', { method: 'POST', body: { fileId, quality: 'original' } });
+    const p = await api('/api/play', { method: 'POST', body: { fileId, quality: 'original', track: false } });
     if (!p.download) throw new Error('Het origineel downloaden is voor jouw account uitgezet door de beheerder.');
     const a = h('a', { href: p.download, download: '' }); document.body.append(a); a.click(); a.remove(); toast('Download gestart');
   });
@@ -511,6 +512,36 @@ async function shareDialog(d, after) {
   const m = openModal(h('form.stack', { onsubmit: (e) => { e.preventDefault(); act(e.submitter, async () => { await api(`/api/lists/${d.id}/shares`, { method: 'PUT', body: { users: rows.filter((r) => r.on.checked).map((r) => ({ id: r.u.id, edit: r.edit.checked })) } }); toast('Opgeslagen'); m.close(); after(); }); } },
     h('h2', `"${d.name}" delen`), rows.length ? h('div.stack', { style: { gap: '8px' } }, rows.map((r) => h('div.device', h('label.row.grow', r.on, h('b', r.u.name)), h('label.row', r.edit, h('span.faint', 'mag bewerken'))))) : h('p.muted', 'Er zijn nog geen andere gebruikers op deze server.'),
     h('button.btn.primary', 'Opslaan')), { small: true });
+}
+
+// ---------------------------------------------------------------------------
+// Requests
+// ---------------------------------------------------------------------------
+export async function requestsView() {
+  const STATUS = { pending: 'In behandeling', approved: 'Goedgekeurd — komt eraan', declined: 'Afgewezen', available: 'Staat in de bibliotheek' };
+  let kind = 'movie', timer;
+  const results = h('div.lists'), mine = h('div.list');
+  const q = h('input.input', { type: 'search', placeholder: 'Zoek een film of serie die je mist…', style: { maxWidth: '420px' }, oninput: () => { clearTimeout(timer); timer = setTimeout(search, 350); } });
+  const kindSel = h('select.input', { style: { width: 'auto' }, onchange: () => { kind = kindSel.value; search(); } }, h('option', { value: 'movie' }, 'Films'), h('option', { value: 'show' }, 'Series'));
+  const off = shell('requests', h('div.page', h('h1', 'Iets aanvragen'), h('p.lead', 'Mis je een film of serie? Vraag hem aan; de beheerder beslist.'), h('div.row.wrap', { style: { marginBottom: '18px' } }, q, kindSel), results,
+    h('h2', { style: { margin: '30px 0 12px' } }, 'Jouw verzoeken'), mine));
+  async function search() {
+    const term = q.value.trim();
+    if (term.length < 2) { results.replaceChildren(); return; }
+    let d; try { d = await api(`/api/requests/search?kind=${kind}&q=${encodeURIComponent(term)}`); } catch (e) { results.replaceChildren(h('p.muted', e.message)); return; }
+    if (q.value.trim() !== term) return;
+    results.replaceChildren(...(d.results.length ? d.results.map((r) => h('div.list-card', r.poster ? h('img', { src: r.poster, alt: '', loading: 'lazy', style: { width: '100%', aspectRatio: '2/3', objectFit: 'cover', borderRadius: '10px', marginBottom: '8px' } }) : h('div.fan'),
+      h('b', r.title), h('small', r.year || ''),
+      r.available ? h('span.badge', 'Al in de bibliotheek') : r.requested ? h('span.badge', 'Al aangevraagd')
+        : h('button.btn.primary.sm', { style: { marginTop: '6px' }, onclick: (e) => act(e.currentTarget, async () => { await api('/api/requests', { method: 'POST', body: { kind: r.kind, title: r.title, year: r.year, imdbId: r.imdbId, tmdbId: r.tmdbId, poster: r.poster, overview: r.overview } }); toast('Aangevraagd'); r.requested = true; search(); list(); }) }, 'Aanvragen'))) : [h('p.muted', 'Niets gevonden.')]));
+  }
+  async function list() {
+    const d = await api('/api/requests');
+    mine.replaceChildren(...(d.requests.length ? d.requests.map((r) => h('div.list-item', h('div.grow', h('b', `${r.title}${r.year ? ` (${r.year})` : ''}`), h('small', `${STATUS[r.status]}${r.note ? ` · "${r.note}"` : ''}`)),
+      r.status === 'pending' && h('button.btn.sm', { onclick: () => act(null, async () => { await api(`/api/requests/${r.id}`, { method: 'DELETE' }); list(); }) }, 'Intrekken'))) : [h('p.muted', 'Je hebt nog niets aangevraagd.')]));
+  }
+  list().catch((e) => toast(e.message, 'bad'));
+  return off;
 }
 
 // ---------------------------------------------------------------------------

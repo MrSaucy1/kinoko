@@ -303,6 +303,141 @@ class _ListScreenState extends State<ListScreen> {
   }
 }
 
+/// Ask for a film or series that is not in the library yet.
+class RequestsScreen extends StatefulWidget {
+  const RequestsScreen({super.key});
+  @override
+  State<RequestsScreen> createState() => _RequestsScreenState();
+}
+
+class _RequestsScreenState extends State<RequestsScreen> {
+  static const _status = {'pending': 'In behandeling', 'approved': 'Goedgekeurd — komt eraan', 'declined': 'Afgewezen', 'available': 'Staat in de bibliotheek'};
+  final _q = TextEditingController();
+  String _kind = 'movie';
+  List<Json> _results = [];
+  List<Json> _mine = [];
+  String? _error;
+  bool _searching = false;
+  int _seq = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadMine();
+  }
+
+  Future<void> _loadMine() async {
+    try {
+      final d = await api.get('/api/requests');
+      if (mounted) setState(() => _mine = listOf(d['requests']));
+    } catch (_) {
+      // The list is a convenience; searching still works.
+    }
+  }
+
+  Future<void> _search() async {
+    final term = _q.text.trim();
+    if (term.length < 2) return setState(() => _results = []);
+    final seq = ++_seq;
+    setState(() {
+      _searching = true;
+      _error = null;
+    });
+    try {
+      final d = await api.get('/api/requests/search?kind=$_kind&q=${Uri.encodeQueryComponent(term)}');
+      if (mounted && seq == _seq) setState(() => _results = listOf(d['results']));
+    } catch (e) {
+      if (mounted && seq == _seq) setState(() => _error = e.toString());
+    }
+    if (mounted && seq == _seq) setState(() => _searching = false);
+  }
+
+  Future<void> _ask(Json r) async {
+    setState(() => r['requested'] = true); // shown at once; undone if the server refuses
+    try {
+      await api.post('/api/requests', {'kind': r['kind'], 'title': r['title'], 'year': r['year'], 'imdbId': r['imdbId'], 'tmdbId': r['tmdbId'], 'poster': r['poster'], 'overview': r['overview']});
+      if (mounted) showMessage(context, 'Aangevraagd');
+      _loadMine();
+    } catch (e) {
+      if (mounted) {
+        setState(() => r['requested'] = false);
+        showMessage(context, e);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final pad = Device.isTv ? 48.0 : 16.0;
+    return Scaffold(
+      appBar: AppBar(title: const Text('Iets aanvragen', style: TextStyle(fontWeight: FontWeight.w800)), leading: Device.isTv ? const SizedBox.shrink() : null),
+      body: ListView(padding: EdgeInsets.fromLTRB(pad, 4, pad, 40), children: [
+        const Text('Mis je een film of serie? Vraag hem aan; de beheerder beslist.', style: TextStyle(color: K.muted)),
+        const SizedBox(height: 12),
+        Row(children: [
+          Expanded(child: TextField(controller: _q, textInputAction: TextInputAction.search, onSubmitted: (_) => _search(), decoration: const InputDecoration(labelText: 'Zoek een titel'))),
+          const SizedBox(width: 10),
+          DropdownButton<String>(
+            value: _kind,
+            dropdownColor: K.surface,
+            underline: const SizedBox.shrink(),
+            items: const [DropdownMenuItem(value: 'movie', child: Text('Films')), DropdownMenuItem(value: 'show', child: Text('Series'))],
+            onChanged: (v) {
+              setState(() => _kind = v ?? 'movie');
+              _search();
+            },
+          ),
+          const SizedBox(width: 6),
+          RoundIcon(Icons.search_rounded, tooltip: 'Zoeken', onTap: _search),
+        ]),
+        const SizedBox(height: 12),
+        if (_searching) const Padding(padding: EdgeInsets.all(20), child: Center(child: CircularProgressIndicator(color: K.orchid))),
+        if (_error != null) Text(_error!, style: const TextStyle(color: K.muted)),
+        for (final r in _results)
+          Container(
+            margin: const EdgeInsets.only(bottom: 10),
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(color: K.surface, borderRadius: BorderRadius.circular(14), border: Border.all(color: K.line)),
+            child: Row(children: [
+              SizedBox(width: 46, height: 69, child: ClipRRect(borderRadius: BorderRadius.circular(6), child: NetImage(r['poster'], fallbackText: r['title'].toString().characters.first))),
+              const SizedBox(width: 12),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(r['title'].toString(), maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)), Text('${r['year'] ?? ''}', style: const TextStyle(color: K.muted, fontSize: 13))])),
+              if (r['available'] == true) const Badge2('In de bibliotheek') else if (r['requested'] == true) const Badge2('Aangevraagd') else KButton('Aanvragen', primary: true, onTap: () => _ask(r)),
+            ]),
+          ),
+        const SizedBox(height: 18),
+        const Text('Jouw verzoeken', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+        const SizedBox(height: 8),
+        if (_mine.isEmpty) const Text('Je hebt nog niets aangevraagd.', style: TextStyle(color: K.muted)),
+        for (final r in _mine)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Row(children: [
+              Expanded(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('${r['title']}${r['year'] != null ? ' (${r['year']})' : ''}', style: const TextStyle(fontWeight: FontWeight.w700)),
+                  Text('${_status[r['status']] ?? r['status']}${(r['note'] ?? '').toString().isEmpty ? '' : ' · "${r['note']}"'}', style: const TextStyle(color: K.muted, fontSize: 13)),
+                ]),
+              ),
+              if (r['status'] == 'pending')
+                TextButton(
+                  onPressed: () async {
+                    try {
+                      await api.delete('/api/requests/${r['id']}');
+                      _loadMine();
+                    } catch (e) {
+                      if (context.mounted) showMessage(context, e);
+                    }
+                  },
+                  child: const Text('Intrekken', style: TextStyle(color: K.orchid)),
+                ),
+            ]),
+          ),
+      ]),
+    );
+  }
+}
+
 /// Kinoko Wrapped: the user's year in numbers.
 class WrappedScreen extends StatefulWidget {
   const WrappedScreen({super.key});

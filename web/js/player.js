@@ -371,7 +371,11 @@ export async function startPlayback(opts) {
     wake();
   }
   document.addEventListener('keydown', onKey);
+  // The admin ended this stream: say so and leave the player.
+  const onServer = (e) => { if (e.detail && e.detail.t === 'stopped' && !room) { toast(e.detail.message || 'De beheerder heeft deze stream gestopt.', 'bad'); closed = true; cleanup(); } };
+  window.addEventListener('kinoko:event', onServer);
   function cleanup() {
+    window.removeEventListener('kinoko:event', onServer);
     clearInterval(progressTimer); clearInterval(countdown); clearInterval(voteTick); clearTimeout(idleTimer); clearTimeout(offsetTimer);
     document.removeEventListener('keydown', onKey);
     if (ws) { ws.onclose = null; ws.close(); }

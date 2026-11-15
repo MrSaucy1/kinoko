@@ -1,5 +1,5 @@
 import { api, h, state, route, render, go, setView, setToken, act, toast, icon } from './core.js';
-import { homeView, gridView, liveView, openDetail, listsView, listView, wrappedView, sharedWrappedView } from './views.js';
+import { homeView, gridView, liveView, openDetail, listsView, listView, wrappedView, sharedWrappedView, requestsView } from './views.js';
 import { joinRoomView } from './player.js';
 import { adminView, setupView } from './admin.js';
 
@@ -49,6 +49,7 @@ export function connectEvents() {
     let m; try { m = JSON.parse(ev.data); } catch { return; }
     window.dispatchEvent(new CustomEvent('kinoko:event', { detail: m }));
     if (m.t === 'resume' && !document.querySelector('.player')) resumeOffer(m);
+    if (m.t === 'request') toast(m.status === 'available' ? `${m.title} staat nu in de bibliotheek` : m.status === 'approved' ? `Je verzoek voor ${m.title} is goedgekeurd` : m.status === 'declined' ? `Je verzoek voor ${m.title} is afgewezen${m.note ? `: ${m.note}` : ''}` : `Je verzoek voor ${m.title} is bijgewerkt`);
   };
   ws.onclose = () => { clearInterval(beat); if (events === ws) { events = null; setTimeout(() => { if (state.token && state.user) connectEvents(); }, 15_000); } };
 }
@@ -86,6 +87,7 @@ route('/titel/:id', guard(async ({ id }) => { const off = await homeView(); open
 route('/lijsten', guard(() => listsView()));
 route('/lijsten/:id', guard((p) => listView(p)));
 route('/wrapped', guard((p, q) => wrappedView(p, q)));
+route('/verzoeken', guard(() => requestsView()));
 route('/wrapped/:token', sharedWrappedView);
 route('/beheer', guard(() => adminView({})));
 route('/beheer/:section', guard((p) => adminView(p)));

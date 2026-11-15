@@ -88,6 +88,7 @@ class ProfileScreen extends StatelessWidget {
             item(Icons.favorite_rounded, 'Mijn lijst', 'Alles wat je hebt bewaard', () => Navigator.push(context, MaterialPageRoute(builder: (_) => const _MyList()))),
             item(Icons.playlist_play_rounded, 'Lijsten', 'Eigen lijsten, ook om te delen', () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ListsScreen()))),
             item(Icons.auto_awesome_rounded, 'Jouw jaar', 'Kinoko Wrapped: uren, top-titels en genres', () => Navigator.push(context, MaterialPageRoute(builder: (_) => const WrappedScreen()))),
+            if (u['kids'] != true) item(Icons.add_circle_outline_rounded, 'Iets aanvragen', 'Vraag een film of serie aan bij de beheerder', () => Navigator.push(context, MaterialPageRoute(builder: (_) => const RequestsScreen()))),
             item(Icons.casino_rounded, 'Watch Night', 'Dobbel voor drie films die bij het seizoen passen', () => openWatchNight(context)),
             item(Icons.devices_rounded, 'Apparaten', 'Waar je account is ingelogd; log een apparaat uit', () => Navigator.push(context, MaterialPageRoute(builder: (_) => const _Devices()))),
             item(Icons.verified_user_rounded, 'Tweestapsverificatie', u['twoFactor'] == true ? 'Staat aan' : 'Extra code bij het inloggen', () => Navigator.push(context, MaterialPageRoute(builder: (_) => const _TwoFactor()))),

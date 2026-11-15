@@ -43,7 +43,7 @@ class _DetailScreenState extends State<DetailScreen> {
 
   Future<void> _download(Json d, Json version, {Json? episode}) async {
     try {
-      final play = await api.post('/api/play', {'fileId': version['fileId'], 'quality': 'original'});
+      final play = await api.post('/api/play', {'fileId': version['fileId'], 'quality': 'original', 'track': false});
       if (play['download'] == null) throw ApiException(403, 'Het origineel downloaden is voor jouw account uitgezet door de beheerder.');
       await Downloads.instance.start(play: play, meta: {
         'titleId': d['id'],

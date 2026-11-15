@@ -89,7 +89,7 @@ class Downloads extends ChangeNotifier {
   Future<void> resume(DownloadItem item) async {
     if (_active.containsKey(item.id)) return;
     try {
-      final play = await api.post('/api/play', {'fileId': item.meta['fileId'], 'quality': 'original'});
+      final play = await api.post('/api/play', {'fileId': item.meta['fileId'], 'quality': 'original', 'track': false});
       unawaited(_run(item, api.abs(play['download'])!));
     } catch (e) {
       item.status = 'failed';

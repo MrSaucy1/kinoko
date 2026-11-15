@@ -150,7 +150,9 @@ const PAGES = {
   bibliotheken: ['Bibliotheken', 'folder', () => page('Bibliotheken', 'Mappen met films en series. Kinoko scant ze automatisch en haalt posters, cast en genres erbij.', librariesPanel())],
   metadata: ['Metadata', 'tag', () => page('Metadata', 'Waar titels, posters, acteurs en genres vandaan komen.', metadataPanel(), ratingsSection())],
   transcoderen: ['Transcoderen', 'chip', () => page('Transcoderen', 'Als iemand een lagere kwaliteit kiest, zet de server de video live om — het liefst op de videokaart.', transcodePanel(), markersSection())],
+  activiteit: ['Activiteit', 'play', activityPage],
   gebruikers: ['Gebruikers', 'users', usersPage],
+  verzoeken: ['Verzoeken', 'plus', requestsPage],
   servers: ['Gekoppelde servers', 'server', peersPage],
   'live-tv': ['Live tv', 'globe', iptvPage],
   'back-ups': ['Back-ups', 'download', backupsPage],
@@ -230,6 +232,69 @@ function ratingsSection() {
   }
   draw();
   return box;
+}
+
+// Live: who is watching what, and how busy the server is.
+async function activityPage() {
+  const lead = 'Wie er nu kijkt, hoe (direct of omgezet) en hoe druk de server het heeft. Ververst elke drie seconden.';
+  page('Activiteit', lead);
+  const box = h('div'); let timer;
+  main.replaceChildren(h('h1', 'Activiteit'), h('p.lead', lead), box);
+  async function draw() {
+    if (!box.isConnected) return;
+    let d; try { d = await api('/api/admin/activity'); } catch { timer = setTimeout(draw, 5000); return; }
+    const s = d.system, gb = (b) => `${(b / 1e9).toFixed(1).replace('.', ',')} GB`;
+    const meter = (label, pct, text) => h('div.stat', h('b', text), h('span', label), pct !== null && h('div.progress', { style: { marginTop: '8px' } }, h('i', { style: { width: `${Math.max(0, Math.min(100, pct))}%` } })));
+    box.replaceChildren(
+      h('div.stats', meter('processor', s.cpu, s.cpu === null ? '…' : `${s.cpu}%`), meter(`belasting (${s.cores} cores)`, null, String(s.load[0]).replace('.', ',')), meter('geheugen', (s.memUsed / s.memTotal) * 100, `${gb(s.memUsed)} / ${gb(s.memTotal)}`),
+        meter('videokaart', s.gpu, s.gpu === null ? 'onbekend' : `${s.gpu}%`), meter('actieve omzettingen', null, String(d.transcodes.filter((t) => t.running).length))),
+      h('div.section', h('h2', `Nu aan het kijken (${d.streams.length})`), d.streams.length ? h('div.list', d.streams.map((p) => h('div.list-item',
+        h('div.grow', h('b', `${p.user} · ${p.title}${p.episode ? ` · ${p.episode}` : ''}`),
+          h('small', [p.device || 'onbekend apparaat', p.transcoding ? `omgezet naar ${p.quality}p` : 'direct afgespeeld', p.remote ? 'via gekoppelde server' : null, p.paused ? 'gepauzeerd' : p.idleSeconds > 45 ? `geen teken sinds ${p.idleSeconds} s` : null].filter(Boolean).join(' · ')),
+          p.duration > 0 && h('div.progress', { style: { marginTop: '8px' } }, h('i', { style: { width: `${Math.min(100, (p.position / p.duration) * 100)}%` } }))),
+        h('button.btn.sm.danger', { onclick: async () => {
+          const msg = prompt(`Stream van ${p.user} stoppen. Bericht voor de kijker (mag leeg):`, '');
+          if (msg === null) return;
+          await act(null, async () => { await api(`/api/admin/activity/${p.id}/stop`, { method: 'POST', body: { message: msg } }); toast('Stream gestopt'); }); draw();
+        } }, 'Stoppen')))) : h('p.muted', 'Er kijkt nu niemand.')),
+      d.transcodes.length ? h('div.section', h('h2', 'Omzettingen'), h('div.list', d.transcodes.map((t) => h('div.list-item', h('div.grow', h('b', t.file), h('small', `${t.height}p · ${t.pipeline || 'start…'}${t.hdr ? ' · HDR → SDR' : ''} · ${t.running ? (t.paused ? 'loopt vooruit, even gepauzeerd' : 'bezig') : 'wacht'}`)))))) : null);
+    clearTimeout(timer); timer = setTimeout(draw, 3000);
+  }
+  draw();
+}
+
+// Requests from users, and the link with Radarr/Sonarr.
+async function requestsPage() {
+  const lead = 'Gebruikers vragen films en series aan; jij keurt goed of af. Met Radarr en Sonarr gaat een goedgekeurd verzoek vanzelf door.';
+  page('Verzoeken', lead);
+  const STATUS = { pending: 'Wacht op jou', approved: 'Goedgekeurd', declined: 'Afgewezen', available: 'Beschikbaar' };
+  async function draw() {
+    const d = await api('/api/admin/requests');
+    const decide = (r, status) => act(null, async () => { const note = status === 'declined' ? prompt('Reden (mag leeg):', '') : ''; if (note === null) return; const x = await api(`/api/admin/requests/${r.id}`, { method: 'PUT', body: { status, note } }); toast(x.forwardError ? `Goedgekeurd, maar doorsturen mislukte: ${x.forwardError}` : x.forwarded ? `Goedgekeurd en doorgestuurd naar ${x.forwarded === 'radarr' ? 'Radarr' : 'Sonarr'}` : 'Opgeslagen', x.forwardError ? 'bad' : ''); draw(); });
+    const arrForm = (which, label, placeholder) => {
+      const url = h('input.input', { placeholder, value: d[which].url }), key = h('input.input', { placeholder: 'API-sleutel', value: d[which].key, autocomplete: 'off' });
+      return h('div.stack', { style: { gap: '8px' } }, h('b', label), h('div.row.wrap', url, key, h('button.btn', { onclick: (e) => act(e.currentTarget, async () => { await api('/api/admin/requests/settings', { method: 'PUT', body: { [which]: { url: url.value, key: key.value } } }); toast('Opgeslagen'); draw(); }) }, 'Opslaan')));
+    };
+    const map = h('textarea.input', { rows: 2, placeholder: '/movies = /mnt/media/films', style: { height: 'auto', padding: '10px 12px' } }, d.pathMap);
+    const hook = d.hookPath ? location.origin + d.hookPath : null;
+    main.replaceChildren(h('h1', 'Verzoeken'), h('p.lead', lead),
+      h('div.section', d.requests.length ? h('div.list', d.requests.map((r) => h('div.list-item', r.poster ? h('img', { src: r.poster, alt: '', style: { width: '42px', aspectRatio: '2/3', objectFit: 'cover', borderRadius: '6px' } }) : null,
+        h('div.grow', h('b', `${r.title}${r.year ? ` (${r.year})` : ''}`), h('small', `${r.kind === 'show' ? 'Serie' : 'Film'} · aangevraagd door ${r.user} · ${fmtDate(r.created_at)} · ${STATUS[r.status]}${r.forwarded ? ` · doorgestuurd` : ''}${r.forwardError ? ` · doorsturen mislukt: ${r.forwardError}` : ''}${r.note ? ` · "${r.note}"` : ''}`)),
+        r.status !== 'available' && r.status !== 'approved' && h('button.btn.sm.primary', { onclick: () => decide(r, 'approved') }, 'Goedkeuren'),
+        r.status === 'pending' && h('button.btn.sm', { onclick: () => decide(r, 'declined') }, 'Afwijzen'),
+        h('button.btn.sm.danger', { 'aria-label': 'Verwijderen', onclick: async () => { await api(`/api/admin/requests/${r.id}`, { method: 'DELETE' }); draw(); } }, icon('trash'))))) : h('p.muted', 'Nog geen verzoeken.')),
+      h('div.section', h('h2', 'Radarr en Sonarr (optioneel)'), h('div.card-box.stack', h('p.muted', 'Vul adres en API-sleutel in (Radarr/Sonarr → Settings → General). Kinoko gebruikt de eerste map en het eerste kwaliteitsprofiel dat daar is ingesteld.'),
+        arrForm('radarr', 'Radarr (films)', 'http://192.168.1.10:7878'), arrForm('sonarr', 'Sonarr (series)', 'http://192.168.1.10:8989'))),
+      h('div.section', h('h2', 'Webhook: meteen scannen na een import'), h('div.card-box.stack',
+        h('p.muted', 'Voeg dit adres in Radarr/Sonarr toe onder Settings → Connect → Webhook ("On Import" en "On Upgrade"). Het adres bevat een geheime code; deel het niet.'),
+        hook ? [h('div.codebox', h('span.grow', { style: { wordBreak: 'break-all' } }, hook), h('button.btn.sm', { onclick: () => copyText(hook, 'Adres gekopieerd') }, icon('copy'))),
+          h('div.row.wrap', h('button.btn', { onclick: async () => { if (await confirmDialog('Nieuw adres maken?', 'Het oude adres werkt daarna niet meer; pas het aan in Radarr en Sonarr.', 'Nieuw adres')) { await api('/api/admin/requests/settings', { method: 'PUT', body: { newHook: true } }); draw(); } } }, 'Nieuw adres'),
+            h('button.btn.danger', { onclick: async () => { await api('/api/admin/requests/settings', { method: 'PUT', body: { removeHook: true } }); draw(); } }, 'Uitzetten'))]
+          : h('div.row', h('button.btn.primary', { onclick: (e) => act(e.currentTarget, async () => { await api('/api/admin/requests/settings', { method: 'PUT', body: { newHook: true } }); draw(); }) }, 'Webhook aanzetten')),
+        h('label.field', h('span', 'Ziet Radarr/Sonarr de mappen onder een ander pad? Eén regel per map: pad daar = pad hier'), map),
+        h('div.row', h('button.btn', { onclick: (e) => act(e.currentTarget, async () => { await api('/api/admin/requests/settings', { method: 'PUT', body: { pathMap: map.value } }); toast('Opgeslagen'); }) }, 'Paden opslaan')))));
+  }
+  draw().catch((e) => toast(e.message, 'bad'));
 }
 
 // Which libraries one user may see.

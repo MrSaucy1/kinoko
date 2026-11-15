@@ -48,6 +48,17 @@ class _KinokoAppState extends State<KinokoApp> {
 
   /// "Paused on another device": offer to pick it up here.
   void _onEvent(Json m) {
+    if (m['t'] == 'request') {
+      final title = m['title'], note = (m['note'] ?? '').toString();
+      final text = switch (m['status']) {
+        'available' => '$title staat nu in de bibliotheek',
+        'approved' => 'Je verzoek voor $title is goedgekeurd',
+        'declined' => 'Je verzoek voor $title is afgewezen${note.isEmpty ? '' : ': $note'}',
+        _ => 'Je verzoek voor $title is bijgewerkt',
+      };
+      _messenger.currentState?.showSnackBar(SnackBar(content: Text(text)));
+      return;
+    }
     if (m['t'] != 'resume' || PlayerScreen.open > 0) return;
     final ctx = _navigator.currentContext;
     if (ctx == null || !api.signedIn) return;
