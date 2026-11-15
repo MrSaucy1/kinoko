@@ -6,17 +6,23 @@ import { startPlayback, playChannel, playExtra } from './player.js';
 // Shell
 // ---------------------------------------------------------------------------
 let liveEnabled = null;
+let musicEnabled = null;
+async function hasMusic() {
+  if (musicEnabled === null) { try { musicEnabled = !(await api('/api/music/home')).empty; } catch { musicEnabled = false; } }
+  return musicEnabled;
+}
 async function hasLive() {
   if (liveEnabled === null) { try { liveEnabled = (await api('/api/iptv')).enabled; } catch { liveEnabled = false; } }
   return liveEnabled;
 }
 
 export function shell(active, ...content) {
-  const links = [['home', '/', 'Home', 'home'], ['movie', '/films', 'Films', 'film'], ['show', '/series', 'Series', 'tv'], ['live', '/live', 'Live tv', 'globe'], ['mylist', '/mijn-lijst', 'Mijn lijst', 'heart']];
+  const links = [['home', '/', 'Home', 'home'], ['movie', '/films', 'Films', 'film'], ['show', '/series', 'Series', 'tv'], ['music', '/muziek', 'Muziek', 'vol'], ['live', '/live', 'Live tv', 'globe'], ['mylist', '/mijn-lijst', 'Mijn lijst', 'heart']];
   const nav = h('nav.nav'), tabs = h('nav.tabbar');
   for (const [id, href, label, ic] of links) {
     const a = h(`a${id === active ? '.on' : ''}`, { href }, label);
     const t = h(`a${id === active ? '.on' : ''}`, { href }, icon(ic), label);
+    if (id === 'music') { a.classList.add('hide'); t.classList.add('hide'); hasMusic().then((on) => { if (on) { a.classList.remove('hide'); t.classList.remove('hide'); } }); }
     if (id === 'live') { a.classList.add('hide'); t.classList.add('hide'); hasLive().then((on) => { if (on) { a.classList.remove('hide'); t.classList.remove('hide'); } }); }
     nav.append(a); tabs.append(t);
   }

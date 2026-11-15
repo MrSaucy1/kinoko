@@ -27,8 +27,9 @@ function libraryForm(onDone) {
   const name = h('input.input', { placeholder: 'Films', required: true });
   const pathBox = h('div.stack', { style: { gap: '8px' } });
   const types = h('div.row');
-  const drawTypes = () => types.replaceChildren(['movies', 'shows'].map((t) => h(`button.option${t === type ? '.on' : ''}`, { type: 'button', style: { flex: 1 }, onclick: () => { type = t; if (!name.value || ['Films', 'Series'].includes(name.value)) name.value = t === 'movies' ? 'Films' : 'Series'; drawTypes(); } },
-    h('div.ico', icon(t === 'movies' ? 'film' : 'tv')), h('div', h('b', t === 'movies' ? 'Films' : 'Series'), h('span', t === 'movies' ? 'Eén bestand per film' : 'Mappen met seizoenen')))));
+  const KIND = { movies: ['Films', 'film', 'Eén bestand per film'], shows: ['Series', 'tv', 'Mappen met seizoenen'], music: ['Muziek', 'vol', 'Artiest / album / nummers'] };
+  const drawTypes = () => types.replaceChildren(Object.keys(KIND).map((t) => h(`button.option${t === type ? '.on' : ''}`, { type: 'button', style: { flex: 1 }, onclick: () => { type = t; if (!name.value || ['Films', 'Series', 'Muziek'].includes(name.value)) name.value = KIND[t][0]; drawTypes(); } },
+    h('div.ico', icon(KIND[t][1])), h('div', h('b', KIND[t][0]), h('span', KIND[t][2])))));
   const drawPaths = () => pathBox.replaceChildren(paths.map((p, i) => h('div.codebox', h('span.grow', p), h('button', { type: 'button', 'aria-label': 'Verwijder map', onclick: () => { paths.splice(i, 1); drawPaths(); } }, icon('x')))),
     h('button.btn', { type: 'button', onclick: () => folderPicker((p) => { if (!paths.includes(p)) paths.push(p); drawPaths(); }) }, icon('folder'), paths.length ? 'Nog een map' : 'Map kiezen'));
   const shared = h('input', { type: 'checkbox', checked: true });
@@ -46,9 +47,9 @@ function librariesPanel() {
     let d; try { d = await api('/api/admin/libraries'); } catch { return; }
     const scan = d.scan;
     box.replaceChildren(
-      d.libraries.length ? h('div.list', d.libraries.map((l) => h('div.list-item', h('div.option', { style: { width: 'auto', padding: '8px', border: 0, background: 'none', cursor: 'default' } }, h('div.ico', icon(l.type === 'movies' ? 'film' : 'tv'))),
-        h('div.grow', h('b', l.name), h('small', l.paths.join(' · ')), h('small', `${l.titles} titels · ${l.files} bestanden${l.shared ? ' · gedeeld met koppelingen' : ''}`)),
-        h('label.row', { title: 'Kleine voorbeeldplaatjes bij het spoelen. Het maken kost eenmalig rekentijd per bestand.' }, h('span.switch', h('input', { type: 'checkbox', checked: l.trickplay, onchange: (e) => act(null, async () => { await api(`/api/admin/libraries/${l.id}`, { method: 'PUT', body: { trickplay: e.target.checked } }); toast(e.target.checked ? 'Previews worden op de achtergrond gemaakt' : 'Previews uitgezet'); }) }), h('i')), h('small', 'Spoel-previews')),
+      d.libraries.length ? h('div.list', d.libraries.map((l) => h('div.list-item', h('div.option', { style: { width: 'auto', padding: '8px', border: 0, background: 'none', cursor: 'default' } }, h('div.ico', icon(l.type === 'movies' ? 'film' : l.type === 'music' ? 'vol' : 'tv'))),
+        h('div.grow', h('b', l.name), h('small', l.paths.join(' · ')), h('small', `${l.titles} ${l.type === 'music' ? 'albums' : 'titels'} · ${l.files} ${l.type === 'music' ? 'nummers' : 'bestanden'}${l.shared ? ' · gedeeld met koppelingen' : ''}`)),
+        l.type !== 'music' && h('label.row', { title: 'Kleine voorbeeldplaatjes bij het spoelen. Het maken kost eenmalig rekentijd per bestand.' }, h('span.switch', h('input', { type: 'checkbox', checked: l.trickplay, onchange: (e) => act(null, async () => { await api(`/api/admin/libraries/${l.id}`, { method: 'PUT', body: { trickplay: e.target.checked } }); toast(e.target.checked ? 'Previews worden op de achtergrond gemaakt' : 'Previews uitgezet'); }) }), h('i')), h('small', 'Spoel-previews')),
         h('button.btn.sm.danger', { onclick: async () => { if (await confirmDialog('Bibliotheek verwijderen?', `"${l.name}" verdwijnt uit Kinoko. Je bestanden op schijf blijven staan.`, 'Verwijderen')) { await api(`/api/admin/libraries/${l.id}`, { method: 'DELETE' }); draw(); } } }, icon('trash')))))
         : h('p.muted', 'Nog geen bibliotheken. Voeg een map met films of series toe.'),
       scan.running && h('div.note', h('b', scan.phase === 'scan' ? `Scannen: ${scan.library}` : `Bezig met ${scan.phase}…`), scan.total > 0 && scan.phase === 'scan' && h('div.progress', { style: { marginTop: '10px' } }, h('i', { style: { width: `${(scan.done / scan.total) * 100}%` } }))),
@@ -148,7 +149,7 @@ function remotePanel(compact = false) {
 const PAGES = {
   '': ['Overzicht', 'home', dashboard],
   bibliotheken: ['Bibliotheken', 'folder', () => page('Bibliotheken', 'Mappen met films en series. Kinoko scant ze automatisch en haalt posters, cast en genres erbij.', librariesPanel())],
-  metadata: ['Metadata', 'tag', () => page('Metadata', 'Waar titels, posters, acteurs en genres vandaan komen.', metadataPanel(), ratingsSection())],
+  metadata: ['Metadata', 'tag', () => page('Metadata', 'Waar titels, posters, acteurs en genres vandaan komen.', metadataPanel(), ratingsSection(), musicSection())],
   transcoderen: ['Transcoderen', 'chip', () => page('Transcoderen', 'Als iemand een lagere kwaliteit kiest, zet de server de video live om — het liefst op de videokaart.', transcodePanel(), markersSection())],
   activiteit: ['Activiteit', 'play', activityPage],
   gebruikers: ['Gebruikers', 'users', usersPage],
@@ -212,6 +213,25 @@ function markersSection() {
         d.state.running && h('span.badge.ok', `bezig ${d.state.done}/${d.state.total}`)),
       h('div.row', h('button.btn', { onclick: (e) => act(e.currentTarget, async () => { await api('/api/admin/markers/redetect', { method: 'POST' }); toast('Detectie opnieuw gestart'); }) }, icon('refresh'), 'Opnieuw detecteren'))));
   })();
+  return box;
+}
+
+// Music: counts, and whether missing covers and artist pictures may be looked up online.
+function musicSection() {
+  const box = h('div.section');
+  async function draw() {
+    let d; try { d = await api('/api/admin/music'); } catch { return; }
+    if (!d.counts.tracks && !d.counts.albums) { box.replaceChildren(); return; }
+    const cache = h('input.input', { type: 'number', min: 100, max: 500000, value: d.cacheMb, style: { maxWidth: '130px' } });
+    box.replaceChildren(h('h2', 'Muziek'), h('div.card-box.stack',
+      h('div.row.wrap', h('span.chip', `${d.counts.artists} artiesten`), h('span.chip', `${d.counts.albums} albums`), h('span.chip', `${d.counts.tracks} nummers`), h('span.chip', `${d.counts.noCover} albums zonder hoes`)),
+      h('p.muted', 'Titels, artiesten en hoezen komen uit de bestanden zelf. Ontbreekt een hoes of artiestfoto, dan kan Kinoko die opzoeken bij MusicBrainz, Cover Art Archive en Wikidata (gratis, zonder sleutel).'),
+      h('label.row', h('span.switch', h('input', { type: 'checkbox', checked: d.online, onchange: (e) => act(null, async () => { await api('/api/admin/music', { method: 'PUT', body: { online: e.target.checked } }); toast('Opgeslagen'); }) }), h('i')), h('span', 'Ontbrekende hoezen en artiestinfo online opzoeken')),
+      d.state.running && h('div.note', `Bezig met opzoeken: ${d.state.done}/${d.state.total}`),
+      h('label.field', h('span', 'Ruimte voor omgezette nummers (MB). Wie een lagere kwaliteit kiest, krijgt een omgezette kopie; de oudste worden vanzelf opgeruimd.'), h('div.row', cache, h('button.btn', { onclick: (e) => act(e.currentTarget, async () => { await api('/api/admin/music', { method: 'PUT', body: { cacheMb: Number(cache.value) } }); toast('Opgeslagen'); }) }, 'Opslaan'))),
+      d.counts.noCover > 0 && d.online && h('div.row', h('button.btn', { onclick: (e) => act(e.currentTarget, async () => { await api('/api/admin/music', { method: 'PUT', body: { retry: true } }); toast('Opnieuw zoeken gestart'); draw(); }) }, 'Ontbrekende hoezen opnieuw zoeken'))));
+  }
+  draw();
   return box;
 }
 

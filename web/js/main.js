@@ -2,6 +2,7 @@ import { api, h, state, route, render, go, setView, setToken, act, toast, icon }
 import { homeView, gridView, liveView, openDetail, listsView, listView, wrappedView, sharedWrappedView, requestsView } from './views.js';
 import { joinRoomView } from './player.js';
 import { adminView, setupView } from './admin.js';
+import { musicView } from './music.js';
 
 function loginView(_, query) {
   const next = query.get('next') || '/';
@@ -89,6 +90,9 @@ route('/lijsten/:id', guard((p) => listView(p)));
 route('/wrapped', guard((p, q) => wrappedView(p, q)));
 route('/verzoeken', guard(() => requestsView()));
 route('/wrapped/:token', sharedWrappedView);
+route('/muziek', guard((p, q) => musicView({}, q)));
+route('/muziek/:section', guard((p, q) => musicView(p, q)));
+route('/muziek/:section/:id', guard((p, q) => musicView(p, q)));
 route('/beheer', guard(() => adminView({})));
 route('/beheer/:section', guard((p) => adminView(p)));
 
