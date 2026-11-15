@@ -19,6 +19,7 @@ import activityRoutes from './activity.js';
 import requestRoutes from './requests.js';
 import musicRoutes from './musicapi.js';
 import musicExtraRoutes from './musicextra.js';
+import castRoutes from './cast.js';
 import archiveRoutes, { fetchIfDue as archiveIfDue } from './archive.js';
 import dvrRoutes, { tick as dvrTick, resume as dvrResume, applyRules as dvrRules, stopAll as dvrStop } from './dvr.js';
 import { watchLibraries, watchState } from './watcher.js';
@@ -93,7 +94,7 @@ app.put('/api/admin/settings', { preHandler: requireAdmin }, async (req) => {
   return { ok: true };
 });
 
-for (const r of [authRoutes, libraryRoutes, metadataRoutes, streamRoutes, subtitleRoutes, markerRoutes, catalogRoutes, watchRoutes, federationRoutes, iptvRoutes, remoteRoutes, eventRoutes, backupRoutes, webhookRoutes, trickplayRoutes, listRoutes, wrappedRoutes, activityRoutes, requestRoutes, musicRoutes, musicExtraRoutes, dvrRoutes, archiveRoutes]) {
+for (const r of [authRoutes, libraryRoutes, metadataRoutes, streamRoutes, subtitleRoutes, markerRoutes, catalogRoutes, watchRoutes, federationRoutes, iptvRoutes, remoteRoutes, eventRoutes, backupRoutes, webhookRoutes, trickplayRoutes, listRoutes, wrappedRoutes, activityRoutes, requestRoutes, musicRoutes, musicExtraRoutes, dvrRoutes, archiveRoutes, castRoutes]) {
   await app.register(r);
 }
 

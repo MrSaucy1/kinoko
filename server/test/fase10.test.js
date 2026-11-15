@@ -126,3 +126,57 @@ test('archive: only a plain https address reaches yt-dlp, with fixed options bef
   assert.equal((await call(a, admin, 'POST', '/api/admin/archive/run')).statusCode, 501);
   await a.close();
 });
+
+test('casting: the Chromecast message format, device discovery answers and a DLNA renderer end to end', async () => {
+  const { default: castRoutes, encodeCast, decodeCast, parseMdns, parseSsdp, parseRenderer, soap, addDevice, baseFor } = await import('../src/cast.js');
+  const { default: streamRoutes } = await import('../src/stream.js');
+  const { mkFile } = await import('./helpers.js');
+  // Protobuf: what goes out comes back the same.
+  const frame = encodeCast({ destination: 'web-5', namespace: 'urn:x-cast:com.google.cast.media', payload: { type: 'LOAD', requestId: 3, media: { contentId: 'http://x/é' } } });
+  assert.equal(frame.readUInt32BE(0), frame.length - 4);
+  assert.deepEqual(decodeCast(frame.subarray(4)), { source: 'sender-0', destination: 'web-5', namespace: 'urn:x-cast:com.google.cast.media', payload: { type: 'LOAD', requestId: 3, media: { contentId: 'http://x/é' } } });
+  assert.deepEqual(decodeCast(Buffer.from([0xff, 0xff, 0xff])), {}, 'rubbish does not crash');
+
+  // An mDNS answer: PTR + TXT (fn=Woonkamer) + SRV (port 8009) + A (192.168.1.50).
+  const label = (s) => Buffer.concat(s.split('.').map((p) => Buffer.concat([Buffer.from([p.length]), Buffer.from(p)])).concat([Buffer.from([0])]));
+  const rr = (name, type, data) => { const h = Buffer.alloc(10); h.writeUInt16BE(type, 0); h.writeUInt16BE(1, 2); h.writeUInt32BE(120, 4); h.writeUInt16BE(data.length, 8); return Buffer.concat([label(name), h, data]); };
+  const txt = Buffer.concat(['id=abc', 'fn=Woonkamer', 'md=Chromecast'].map((kv) => Buffer.concat([Buffer.from([kv.length]), Buffer.from(kv)])));
+  const srv = Buffer.concat([Buffer.from([0, 0, 0, 0, 0x1f, 0x49]), label('cc.local')]);
+  const head = Buffer.from([0, 0, 0x84, 0, 0, 0, 0, 1, 0, 0, 0, 3]);
+  const packet = Buffer.concat([head, rr('_googlecast._tcp.local', 12, label('Cc._googlecast._tcp.local')), rr('Cc._googlecast._tcp.local', 16, txt), rr('Cc._googlecast._tcp.local', 33, srv), rr('cc.local', 1, Buffer.from([192, 168, 1, 50]))]);
+  assert.deepEqual(parseMdns(packet), { name: 'Woonkamer', host: '192.168.1.50', port: 8009, model: 'Chromecast', cast: true });
+  assert.equal(parseMdns(Buffer.from('geen dns')), null);
+  assert.equal(parseSsdp('HTTP/1.1 200 OK\r\nLOCATION: http://192.168.1.60:9197/dmr\r\nST: x\r\n').location, 'http://192.168.1.60:9197/dmr');
+  const desc = '<root><device><friendlyName>TV Slaapkamer</friendlyName><serviceList><service><serviceType>urn:schemas-upnp-org:service:RenderingControl:1</serviceType><controlURL>/rc</controlURL></service><service><serviceType>urn:schemas-upnp-org:service:AVTransport:1</serviceType><controlURL>/upnp/control/avt</controlURL></service></serviceList></device></root>';
+  assert.deepEqual(parseRenderer(desc, 'http://192.168.1.60:9197/dmr'), { name: 'TV Slaapkamer', control: 'http://192.168.1.60:9197/upnp/control/avt' });
+  assert.equal(parseRenderer('<root/>', 'http://x/'), null);
+  assert.match(soap('Play', { Speed: '1' }), /<u:Play xmlns:u="urn:schemas-upnp-org:service:AVTransport:1"><InstanceID>0<\/InstanceID><Speed>1<\/Speed><\/u:Play>/);
+  assert.match(baseFor('10.250.250.9'), /^http:\/\/[\d.]+:\d+$/);
+
+  // A stand-in renderer that notes the SOAP calls it gets.
+  const calls = [];
+  const tv = http.createServer((req, res) => { let b = ''; req.on('data', (d) => { b += d; }); req.on('end', () => { calls.push({ action: String(req.headers.soapaction).split('#')[1].replace('"', ''), body: b }); res.end('<ok/>'); }); });
+  await new Promise((r) => tv.listen(0, '127.0.0.1', r));
+  addDevice({ id: 'tv1', kind: 'dlna', name: 'Test-tv', host: '127.0.0.1', control: `http://127.0.0.1:${tv.address().port}/avt` });
+  const c = await makeApp(authRoutes, streamRoutes, castRoutes);
+  const film = mkFile({ title: 'Castfilm & Co' });
+  assert.equal((await call(c, null, 'GET', '/api/cast/devices')).statusCode, 401);
+  assert.equal((await call(c, ann, 'POST', '/api/cast/bestaat-niet/play', { fileId: film.fileId })).statusCode, 404);
+  assert.equal((await call(c, ann, 'POST', '/api/cast/tv1/play', { fileId: 999999 })).statusCode, 404);
+  const r = await call(c, ann, 'POST', '/api/cast/tv1/play', { fileId: film.fileId, position: 90 });
+  assert.deepEqual(r.json(), { ok: true, device: 'Test-tv', title: 'Castfilm & Co' });
+  assert.deepEqual(calls.map((x) => x.action), ['SetAVTransportURI', 'Play', 'Seek']);
+  const uri = calls[0].body.match(/<CurrentURI>([^<]+)<\/CurrentURI>/)[1];
+  assert.match(uri, /^http:\/\/[\d.]+:\d+\/api\/stream\/[\w-]+$/, 'the tv gets a ticketed address, not a session token');
+  assert.ok(calls[0].body.includes('Castfilm &amp;amp; Co'), 'the title is escaped inside the escaped metadata');
+  assert.ok(calls[2].body.includes('<Target>00:01:30</Target>'));
+  // The remote belongs to whoever started it.
+  const other = mkUser('user', 'Buurman');
+  assert.equal((await call(c, other, 'POST', '/api/cast/tv1/control', { cmd: 'stop' })).statusCode, 404);
+  assert.equal((await call(c, ann, 'POST', '/api/cast/tv1/control', { cmd: 'format c:' })).statusCode, 400);
+  assert.equal((await call(c, ann, 'POST', '/api/cast/tv1/control', { cmd: 'pause' })).statusCode, 200);
+  assert.equal((await call(c, ann, 'POST', '/api/cast/tv1/control', { cmd: 'stop' })).statusCode, 200);
+  assert.deepEqual(calls.slice(3).map((x) => x.action), ['Pause', 'Stop']);
+  assert.equal((await call(c, ann, 'POST', '/api/cast/tv1/control', { cmd: 'play' })).statusCode, 404, 'nothing plays any more');
+  tv.close(); await c.close();
+});
