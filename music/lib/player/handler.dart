@@ -1,9 +1,12 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:audio_service/audio_service.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:kinoko_core/api.dart';
+import 'package:kinoko_core/events.dart';
 
+import '../data/downloads.dart';
 import '../data/models.dart';
 
 /// The one audio handler of the app. Set in main() before the UI starts.
@@ -20,6 +23,14 @@ class KinokoAudioHandler extends BaseAudioHandler with SeekHandler {
   int? _playingId;
   bool _recovering = false;
 
+  // Crossfade: a second player starts the next track underneath the end of this one.
+  final _fader = AudioPlayer();
+  final _uris = <int, Uri>{};
+  Timer? _fadeTimer;
+  int? _fadeTo;
+  bool _radioBusy = false;
+  Timer? _stateTimer;
+
   KinokoAudioHandler() {
     _player.playbackEventStream.listen((_) => _broadcast(), onError: (Object e, StackTrace st) => _recover());
     _player.playingStream.listen((_) => _broadcast());
@@ -30,8 +41,15 @@ class KinokoAudioHandler extends BaseAudioHandler with SeekHandler {
       if (s == ProcessingState.completed) _onFinished();
     });
     // Count real listening time, so skipped tracks are not "plays".
-    _tick = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (_player.playing && _player.processingState == ProcessingState.ready) _listened++;
+    _tick = Timer.periodic(const Duration(milliseconds: 250), (_) {
+      if (_player.playing && _player.processingState == ProcessingState.ready) _listened += 0.25;
+      _maybeCrossfade();
+    });
+    // Kinoko Connect: tell the user's other devices what plays here, and do what they ask.
+    ServerEvents.instance.stream.listen(_onRemote);
+    _player.playingStream.listen((_) => _reportState());
+    _stateTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      if (_player.playing) _reportState();
     });
   }
 
@@ -44,11 +62,24 @@ class KinokoAudioHandler extends BaseAudioHandler with SeekHandler {
   // ---------------------------------------------------------------- queue
   /// Asks the server for a playable address for every track (one request).
   Future<List<AudioSource>> _sources(List<Track> list) async {
-    final r = await api.post('/api/music/play', {'trackIds': [for (final t in list) t.id], 'quality': MusicPrefs.quality, 'format': 'opus'});
-    final urls = {for (final i in listOf(r['items'])) (i['id'] as num).toInt(): i['url'].toString()};
-    // Tracks the server no longer offers drop out of the queue.
-    _pending = [for (final t in list) if (urls.containsKey(t.id)) t];
-    return [for (final t in _pending) AudioSource.uri(Uri.parse(api.abs(urls[t.id])!), tag: t.toMediaItem())];
+    // Downloaded tracks play from the device; only the rest needs the server.
+    final local = {for (final t in list) if (MusicDownloads.instance.pathOf(t.id) != null) t.id: Uri.file(MusicDownloads.instance.pathOf(t.id)!)};
+    final remote = [for (final t in list) if (!local.containsKey(t.id)) t.id];
+    var urls = <int, Uri>{};
+    if (remote.isNotEmpty) {
+      try {
+        final r = await api.post('/api/music/play', {'trackIds': remote, 'quality': MusicPrefs.quality, 'format': 'opus'});
+        urls = {for (final i in listOf(r['items'])) (i['id'] as num).toInt(): Uri.parse(api.abs(i['url'].toString())!)};
+      } on ApiException catch (e) {
+        // Offline with part of the list on the device: play that part.
+        if (e.status != 0 || local.isEmpty) rethrow;
+      }
+    }
+    final all = {...urls, ...local};
+    // Tracks that are neither on the device nor offered by the server drop out of the queue.
+    _pending = [for (final t in list) if (all.containsKey(t.id)) t];
+    _uris.addAll(all);
+    return [for (final t in _pending) AudioSource.uri(all[t.id]!, tag: t.toMediaItem())];
   }
 
   List<Track> _pending = [];
@@ -58,6 +89,8 @@ class KinokoAudioHandler extends BaseAudioHandler with SeekHandler {
     if (list.isEmpty) return;
     _report();
     final wanted = list[index.clamp(0, list.length - 1)];
+    _cancelFade();
+    _uris.clear();
     final sources = await _sources(list);
     if (sources.isEmpty) throw ApiException(404, 'Deze nummers zijn niet (meer) beschikbaar.');
     _tracks = _pending;
@@ -134,23 +167,33 @@ class KinokoAudioHandler extends BaseAudioHandler with SeekHandler {
   Future<void> play() => _player.play();
   @override
   Future<void> pause() async {
+    _cancelFade();
     await _player.pause();
     _save();
   }
 
   @override
-  Future<void> seek(Duration position) => _player.seek(position);
+  Future<void> seek(Duration position) {
+    _cancelFade();
+    return _player.seek(position);
+  }
   @override
   Future<void> skipToQueueItem(int index) async {
     if (index < 0 || index >= _tracks.length) return;
+    _cancelFade();
     await _player.seek(Duration.zero, index: index);
     unawaited(_player.play());
   }
 
   @override
-  Future<void> skipToNext() => _player.seekToNext();
+  Future<void> skipToNext() {
+    _cancelFade();
+    return _player.seekToNext();
+  }
+
   @override
   Future<void> skipToPrevious() async {
+    _cancelFade();
     // Like every player: back first restarts the track, twice goes to the one before.
     if (_player.position > const Duration(seconds: 4) || !_player.hasPrevious) return _player.seek(Duration.zero);
     await _player.seekToPrevious();
@@ -185,8 +228,151 @@ class KinokoAudioHandler extends BaseAudioHandler with SeekHandler {
     if (t?.id != _playingId) _report();
     _playingId = t?.id;
     mediaItem.add(t?.toMediaItem());
+    if (_fadeTo != null && t != null && t.id == _fadeTo) {
+      _handOver(t);
+    } else {
+      _cancelFade();
+      _applyVolume();
+    }
     _broadcast();
     _save();
+    _reportState();
+    if (index != null && index >= _tracks.length - 1) _continueWithRadio();
+  }
+
+  // ---------------------------------------------------------------- volume, crossfade
+  /// Volume levelling from ReplayGain: every track (or album) at about the same loudness.
+  /// A player cannot go above full volume, so tracks that would need a boost stay as they are.
+  double _level(Track? t) {
+    final mode = MusicPrefs.normalize;
+    if (t == null || mode == 'off') return 1;
+    final gain = mode == 'album' ? (t.gainAlbum ?? t.gainTrack) : (t.gainTrack ?? t.gainAlbum);
+    if (gain == null) return 1;
+    return math.pow(10, gain / 20).toDouble().clamp(0.05, 1.0);
+  }
+
+  void _applyVolume() => _player.setVolume(_level(current) * _remoteVolume);
+  double _remoteVolume = 1;
+
+  /// Called a few times a second: near the end of a track, start fading into the next.
+  void _maybeCrossfade() {
+    final seconds = MusicPrefs.crossfade;
+    if (seconds <= 0 || _fadeTo != null || !_player.playing || _player.loopMode == LoopMode.one) return;
+    final d = _player.duration, i = _player.currentIndex, n = _player.nextIndex;
+    if (d == null || i == null || n == null || i >= _tracks.length || n >= _tracks.length) return;
+    final left = d - _player.position;
+    if (left > Duration(seconds: seconds) || left < const Duration(milliseconds: 800) || d < Duration(seconds: seconds * 3)) return;
+    final a = _tracks[i], b = _tracks[n];
+    // Consecutive tracks of one album belong together (live albums, classical): those stay gapless.
+    if (a.albumId > 0 && a.albumId == b.albumId && b.trackNo == a.trackNo + 1) return;
+    final uri = _uris[b.id];
+    if (uri == null) return;
+    _fadeTo = b.id;
+    _startFade(a, b, uri, left);
+  }
+
+  Future<void> _startFade(Track a, Track b, Uri uri, Duration over) async {
+    try {
+      await _fader.setVolume(0);
+      await _fader.setAudioSource(AudioSource.uri(uri));
+      if (_fadeTo != b.id) return; // cancelled while loading
+      unawaited(_fader.play());
+    } catch (_) {
+      _cancelFade();
+      return;
+    }
+    final started = DateTime.now(), total = math.max(1, over.inMilliseconds);
+    final from = _level(a) * _remoteVolume, to = _level(b) * _remoteVolume;
+    _fadeTimer?.cancel();
+    _fadeTimer = Timer.periodic(const Duration(milliseconds: 80), (t) {
+      final k = (DateTime.now().difference(started).inMilliseconds / total).clamp(0.0, 1.0);
+      _player.setVolume(from * (1 - k));
+      _fader.setVolume(to * k);
+      if (k >= 1) t.cancel();
+    });
+  }
+
+  /// The main player has moved on to the track the fader is already playing: jump to the same spot and take over.
+  Future<void> _handOver(Track t) async {
+    _fadeTimer?.cancel();
+    _fadeTo = null;
+    try {
+      await _player.setVolume(0);
+      await _player.seek(_fader.position + const Duration(milliseconds: 120));
+      await _player.setVolume(_level(t) * _remoteVolume);
+    } catch (_) {
+      _applyVolume();
+    }
+    await _fader.stop();
+  }
+
+  void _cancelFade() {
+    if (_fadeTo == null && _fadeTimer == null) return;
+    _fadeTimer?.cancel();
+    _fadeTimer = null;
+    _fadeTo = null;
+    _fader.stop();
+    _applyVolume();
+  }
+
+  // ---------------------------------------------------------------- radio
+  /// Replaces the queue with music that goes with the given track, artist or album.
+  Future<void> startRadio({Track? track, int? artistId, int? albumId}) async {
+    final q = track != null ? 'track=${track.id}' : artistId != null ? 'artist=$artistId' : 'album=$albumId';
+    final more = tracksOf((await api.get('/api/music/radio?$q&limit=40'))['items']);
+    final list = [if (track != null) track, ...more];
+    if (list.isEmpty) throw ApiException(404, 'Hier is geen radio voor te maken.');
+    await playTracks(list);
+  }
+
+  /// The last track of the queue has started: line up similar music behind it.
+  Future<void> _continueWithRadio() async {
+    if (_radioBusy || !MusicPrefs.autoplay || _tracks.isEmpty || _player.loopMode != LoopMode.off || !api.signedIn) return;
+    _radioBusy = true;
+    try {
+      final seeds = [for (final t in _tracks.reversed.take(5)) t.id].join(',');
+      final r = await api.get('/api/music/radio?track=$seeds&exclude=${[for (final t in _tracks) t.id].join(',')}&limit=20');
+      final more = tracksOf(r['items']);
+      if (more.isNotEmpty) await addToQueue(more);
+    } catch (_) {
+      // No radio (offline, or nothing similar): the queue simply ends.
+    }
+    _radioBusy = false;
+  }
+
+  // ---------------------------------------------------------------- Kinoko Connect
+  void _reportState() {
+    final t = current;
+    ServerEvents.instance.send({
+      't': 'player',
+      'state': {'trackId': t?.id, 'title': t?.title ?? '', 'artist': t?.artist ?? '', 'cover': t?.cover, 'playing': _player.playing, 'position': _player.position.inMilliseconds / 1000, 'duration': t?.duration ?? 0},
+    });
+  }
+
+  Future<void> _onRemote(Json m) async {
+    if (m['t'] != 'control') return;
+    try {
+      switch (m['cmd']) {
+        case 'play':
+          await play();
+        case 'pause':
+          await pause();
+        case 'next':
+          await skipToNext();
+        case 'previous':
+          await skipToPrevious();
+        case 'seek':
+          await seek(Duration(milliseconds: (numOf(m['position']) * 1000).round()));
+        case 'volume':
+          _remoteVolume = numOf(m['volume']).clamp(0.0, 1.0);
+          _applyVolume();
+        case 'load':
+          await playTracks(tracksOf(m['items']), index: (m['index'] as num?)?.toInt() ?? 0, position: Duration(milliseconds: (numOf(m['position']) * 1000).round()), autoplay: m['play'] != false);
+      }
+    } catch (_) {
+      // A command that cannot be carried out here is dropped.
+    }
+    _reportState();
   }
 
   void _onFinished() {
@@ -245,6 +431,7 @@ class KinokoAudioHandler extends BaseAudioHandler with SeekHandler {
   Future<void> clear() async {
     _report();
     _saveTimer?.cancel();
+    _cancelFade();
     await _player.stop();
     await _player.clearAudioSources();
     _tracks = [];
@@ -257,6 +444,9 @@ class KinokoAudioHandler extends BaseAudioHandler with SeekHandler {
   void disposePlayer() {
     _tick?.cancel();
     _saveTimer?.cancel();
+    _stateTimer?.cancel();
+    _fadeTimer?.cancel();
+    _fader.dispose();
     _player.dispose();
   }
 

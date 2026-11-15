@@ -9,6 +9,7 @@ import '../data/models.dart';
 import '../player/handler.dart';
 import '../widgets/common.dart';
 import '../widgets/cover.dart';
+import 'extras.dart';
 
 /// The navigator inside the shell: pages open above the tabs but below the
 /// mini player and the navigation bar, so both stay in reach.
@@ -324,18 +325,19 @@ class LibraryScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 4,
+      length: 5,
       child: SafeArea(
         bottom: false,
         child: Column(children: [
           const Padding(padding: EdgeInsets.fromLTRB(16, 14, 16, 0), child: Align(alignment: Alignment.centerLeft, child: Text('Bibliotheek', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w900)))),
-          const TabBar(isScrollable: true, tabAlignment: TabAlignment.start, indicatorColor: K.orchid, labelColor: K.text, unselectedLabelColor: K.muted, dividerColor: Colors.transparent, tabs: [Tab(text: 'Playlists'), Tab(text: 'Albums'), Tab(text: 'Artiesten'), Tab(text: 'Likes')]),
+          const TabBar(isScrollable: true, tabAlignment: TabAlignment.start, indicatorColor: K.orchid, labelColor: K.text, unselectedLabelColor: K.muted, dividerColor: Colors.transparent, tabs: [Tab(text: 'Playlists'), Tab(text: 'Albums'), Tab(text: 'Artiesten'), Tab(text: 'Likes'), Tab(text: 'Downloads')]),
           Expanded(
             child: TabBarView(children: [
               const _Playlists(),
               Paged(path: '/api/music/albums?sort=artist', grid: true, item: (c, a, _, __) => albumCard(c, a, width: numOf(a['_w']))),
               Paged(path: '/api/music/artists', grid: true, item: (c, a, _, __) => artistCard(c, a, width: numOf(a['_w']))),
               const _TrackList('/api/music/likes'),
+              const DownloadsTab(),
             ]),
           ),
         ]),
@@ -665,13 +667,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       body: ListView(padding: const EdgeInsets.fromLTRB(16, 4, 16, 30), children: [
         ListTile(contentPadding: EdgeInsets.zero, leading: const CircleAvatar(backgroundColor: K.violet, child: Icon(Icons.person_rounded, color: Colors.white)), title: Text((u['name'] ?? '').toString(), style: const TextStyle(fontWeight: FontWeight.w700)), subtitle: Text('${api.serverName} · ${api.serverUrl}', maxLines: 1, overflow: TextOverflow.ellipsis)),
         const SizedBox(height: 14),
-        const Text('Geluidskwaliteit', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
-        const Text('Lager dan origineel wordt op de server omgezet naar Opus. Geldt vanaf het volgende nummer dat je start.', style: TextStyle(color: K.muted, fontSize: 13)),
-        RadioGroup<String>(
-          groupValue: MusicPrefs.quality,
-          onChanged: (v) => setState(() => MusicPrefs.quality = v ?? 'original'),
-          child: Column(children: [for (final e in MusicPrefs.qualities.entries) RadioListTile<String>(value: e.key, title: Text(e.value), contentPadding: EdgeInsets.zero, activeColor: K.orchid)]),
-        ),
         for (final section in settingsExtras) section(context, () => setState(() {})),
         const SizedBox(height: 18),
         KButton('Uitloggen', icon: Icons.logout_rounded, expand: true, onTap: () async {

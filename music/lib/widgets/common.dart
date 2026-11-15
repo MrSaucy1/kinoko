@@ -116,6 +116,7 @@ void trackMenu(BuildContext context, Track t, {VoidCallback? onRemove}) {
         row(Icons.playlist_play_rounded, 'Speel hierna', () => attempt(context, () => audio.playNext(t), done: 'Speelt hierna')),
         row(Icons.queue_music_rounded, 'Aan wachtrij toevoegen', () => attempt(context, () => audio.addToQueue([t]), done: 'Toegevoegd aan de wachtrij')),
         row(Icons.playlist_add_rounded, 'Aan playlist toevoegen', () => addToPlaylist(context, [t])),
+        row(Icons.radio_rounded, 'Start radio', () => attempt(context, () => audio.startRadio(track: t))),
         if (t.albumId > 0) row(Icons.album_rounded, 'Naar album', () => nav.push(MaterialPageRoute(builder: (_) => AlbumScreen(t.albumId)))),
         if (t.artistId > 0) row(Icons.person_rounded, 'Naar artiest', () => nav.push(MaterialPageRoute(builder: (_) => ArtistScreen(t.artistId)))),
         if (onRemove != null) row(Icons.remove_circle_outline_rounded, 'Uit deze playlist halen', onRemove),

@@ -90,7 +90,42 @@ class Likes extends ChangeNotifier {
 
 /// User settings of the music app.
 class MusicPrefs {
-  static String get quality => api.prefs.getString('music_quality') ?? 'original';
-  static set quality(String v) => api.prefs.setString('music_quality', v);
   static const qualities = {'original': 'Origineel', '320': 'Hoog (320 kbps)', '160': 'Normaal (160 kbps)', '96': 'Zuinig (96 kbps)'};
+  static String _s(String k, String d) => api.prefs.getString(k) ?? d;
+
+  /// Separate choices for wifi and for mobile data.
+  static String get qualityWifi => _s('music_quality', 'original');
+  static set qualityWifi(String v) => api.prefs.setString('music_quality', v);
+  static String get qualityMobile => _s('music_quality_mobile', '160');
+  static set qualityMobile(String v) => api.prefs.setString('music_quality_mobile', v);
+
+  /// The quality to ask for right now.
+  static String get quality => Net.onWifi ? qualityWifi : qualityMobile;
+
+  /// Seconds of crossfade between tracks; 0 = off.
+  static int get crossfade => (api.prefs.getInt('music_crossfade') ?? 0).clamp(0, 12);
+  static set crossfade(int v) => api.prefs.setInt('music_crossfade', v.clamp(0, 12));
+
+  /// Volume levelling: 'track', 'album' or 'off'.
+  static String get normalize => _s('music_normalize', 'track');
+  static set normalize(String v) => api.prefs.setString('music_normalize', v);
+
+  /// Keep playing similar music when the queue runs out.
+  static bool get autoplay => api.prefs.getBool('music_autoplay') ?? true;
+  static set autoplay(bool v) => api.prefs.setBool('music_autoplay', v);
+
+  static String get downloadQuality => _s('music_dl_quality', '320');
+  static set downloadQuality(String v) => api.prefs.setString('music_dl_quality', v);
+  static bool get downloadWifiOnly => api.prefs.getBool('music_dl_wifi') ?? true;
+  static set downloadWifiOnly(bool v) => api.prefs.setBool('music_dl_wifi', v);
+
+  /// Storage limit for downloads in MB; 0 = no limit.
+  static int get downloadLimitMb => api.prefs.getInt('music_dl_limit') ?? 4096;
+  static set downloadLimitMb(int v) => api.prefs.setInt('music_dl_limit', v);
+}
+
+/// Whether the device is on wifi (or cable) rather than mobile data. Kept up to date in main().
+class Net {
+  static bool onWifi = true;
+  static final changed = ValueNotifier<int>(0);
 }
