@@ -171,6 +171,12 @@ test('with ffmpeg: scan, browse, search, playlists, likes, queue, history, strea
   const aac = (await call(app, ann, 'POST', `/api/music/tracks/${bike}/play`, { quality: '320', format: 'aac' })).json();
   assert.equal(aac.quality, 'original', 'a low-bitrate MP3 is not converted upwards');
   assert.equal((await app.inject({ url: '/api/music/stream/geen-ticket' })).statusCode, 403);
+  // The apps ask for a whole queue at once.
+  const batch = (await call(app, ann, 'POST', '/api/music/play', { trackIds: [bike, bohemian.id, 999999], quality: '160' })).json().items;
+  assert.deepEqual(batch.map((b) => b.id), [bike, bohemian.id]);
+  assert.ok(!batch[0].url.includes('?'), 'the MP3 plays as it is'); assert.match(batch[1].url, /\?q=160&f=opus$/);
+  assert.equal((await app.inject({ url: batch[0].url, headers: { range: 'bytes=0-9' } })).statusCode, 206);
+  assert.equal((await call(app, null, 'POST', '/api/music/play', { trackIds: [bike] })).statusCode, 401);
   assert.equal((await call(app, null, 'POST', `/api/music/tracks/${bike}/play`, {})).statusCode, 401);
 
   // Permissions: a library the user may not see does not exist for them; a child gets no explicit tracks.

@@ -373,11 +373,28 @@ export default async function routes(app) {
     const r = await playUrl(t, req.body?.quality, req.body?.format);
     return { ...r, trackId: t.id, duration: t.duration, gain: { track: t.rg_track_gain, trackPeak: t.rg_track_peak, album: t.rg_album_gain, albumPeak: t.rg_album_peak } };
   });
+  // A whole queue at once, for the apps: one link per track, valid for a day. Nothing is
+  // converted or fetched from a linked server until a link is actually opened.
+  app.post('/api/music/play', { preHandler: requireUser }, async (req) => {
+    const scope = scopeFor(req.user);
+    const ids = (Array.isArray(req.body?.trackIds) ? req.body.trackIds : []).map(Number).filter(Number.isInteger).slice(0, 2000);
+    if (!ids.length) return { items: [] };
+    const q = AUDIO_QUALITIES[req.body?.quality] ? String(req.body.quality) : 'original', f = req.body?.format === 'aac' ? 'aac' : 'opus';
+    const rows = new Map(db.prepare(`SELECT t.id, t.peer_id, t.bitrate, t.codec FROM tracks t WHERE t.id IN (${[...new Set(ids)].join(',')}) AND ${trackSql(scope)}`).all().map((t) => [t.id, t]));
+    return { items: ids.filter((id) => rows.has(id)).map((id) => {
+      const t = rows.get(id);
+      const direct = q === 'original' || (!t.peer_id && t.bitrate > 0 && t.bitrate <= Number(q) * 1000 * 1.1 && ['mp3', 'aac', 'opus', 'vorbis'].includes(t.codec));
+      return { id, url: `/api/music/stream/${issueTrackTicket(id, 24)}${direct ? '' : `?q=${q}&f=${f}`}` };
+    }) };
+  });
+
   // The ticket in the path is the credential: audio players cannot send headers.
   app.get('/api/music/stream/:ticket', async (req, reply) => {
     const id = ticketTrack(req.params.ticket);
-    const t = id && db.prepare('SELECT * FROM tracks WHERE id = ? AND peer_id IS NULL').get(id);
+    const t = id && db.prepare('SELECT * FROM tracks WHERE id = ?').get(id);
     if (!t) throw new HttpError(403, 'Deze link is verlopen.');
+    // A track on a linked server: ask that server for a link and send the player there (through our relay).
+    if (t.peer_id) return reply.redirect((await playUrl(t, req.query.q, req.query.f)).url, 302);
     if (AUDIO_QUALITIES[req.query.q]) {
       const f = req.query.f === 'aac' ? 'aac' : 'opus';
       return sendFile(req, reply, await converted(t, req.query.q, f), { type: f === 'aac' ? 'audio/mp4' : 'audio/ogg', download: req.query.download === '1' });
