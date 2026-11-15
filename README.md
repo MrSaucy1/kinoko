@@ -39,6 +39,9 @@ install/  Proxmox-helperscript, installer en de root-beheerhulp
 | **Meldingen** | Webhooks (Discord of algemene JSON) bij een nieuwe titel, een kijker, een afgeronde scan of een fout. |
 | **Kindermodus** | Leeftijdsclassificatie per titel (Kijkwijzer: AL/6/9/12/14/16/18, uit TMDB, Wikidata of `.nfo`). Per gebruiker een maximale leeftijd; alles daarboven is overal verborgen. Optioneel een eenvoudige home. |
 | **Spoel-previews** | Voorbeeldplaatjes bij het spoelen in web, mobiel en tv; per bibliotheek aan te zetten. |
+| **Activiteit** | Live in het beheer: wie wat kijkt (direct of omgezet, apparaat, voortgang), belasting van processor/videokaart en lopende omzettingen. Een stream is te stoppen met een bericht voor de kijker. |
+| **Verzoeken** | Gebruikers vragen een film of serie aan, de beheerder keurt goed of af. Optioneel gaat een goedgekeurd verzoek door naar Radarr/Sonarr. |
+| **Sonarr/Radarr-webhook** | Een geheim adres dat na een import meteen de betreffende map scant. |
 | **Tweestapsverificatie** | Optioneel per account (TOTP, elke authenticator-app), met herstelcodes. De beheerder kan het verplichten voor beheerders. |
 | **Rechten per bibliotheek** | Per gebruiker kiest de beheerder welke bibliotheken (en gekoppelde servers) zichtbaar zijn; de rest bestaat voor die gebruiker niet. |
 | **Logboek** | Inlogpogingen, wijzigingen aan gebruikers en instellingen, koppelingen en updates; te filteren in het beheer. |

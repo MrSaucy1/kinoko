@@ -121,3 +121,21 @@ Keuzes:
 Open / niet getest:
 - App-schermen (stemmen, lijsten, Jouw jaar) niet op een toestel.
 - Web: een lijst maken of hernoemen gebruikt het standaard `prompt`-venster van de browser.
+
+## Fase 5 — Beheer & automatisering
+
+- Status: **klaar**
+- Branch: `feat/admin` (vanaf `feat/social`)
+- PR: https://github.com/MrSaucy1/kinoko/compare/feat/social...feat/admin?expand=1 — tekst in `docs/pr/fase-5.md`
+
+Gedaan: activiteit-dashboard met stream stoppen, Sonarr/Radarr-webhook met gerichte scan, verzoeken met optioneel doorsturen. Migratie 5.
+
+Keuzes:
+- `which()` is verhuisd naar `ffmpeg.js` (en wordt door `remote.js` doorgegeven) om een import-kring te voorkomen.
+- Streams van gekoppelde servers: alleen melding, geen harde stop.
+- Webhook-token in het adres; API-sleutels gemaskeerd.
+
+Open / niet getest:
+- Doorsturen is getest tegen een nagemaakte Radarr, niet tegen een echte Radarr of Sonarr.
+- GPU-belasting: Intel wordt niet uitgelezen.
+- Stopmelding en verzoeken in de app niet op een toestel.
