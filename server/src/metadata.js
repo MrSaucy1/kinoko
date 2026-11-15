@@ -324,7 +324,7 @@ onScanFinished(async (state) => { state.phase = 'metadata'; await enrichPending(
 // ---------------------------------------------------------------------------
 const inflight = new Map();
 
-async function cachedImage(source) {
+export async function cachedImage(source) {
   if (source.startsWith('file:')) return { file: source.slice(5) };
   if (!/^https?:\/\//.test(source)) return null;
   const file = dataPath('images', sha256(source).slice(0, 32));
@@ -345,7 +345,7 @@ async function cachedImage(source) {
   return inflight.get(source);
 }
 
-function sniff(buf) {
+export function sniff(buf) {
   if (buf[0] === 0x89 && buf[1] === 0x50) return 'image/png';
   if (buf[0] === 0x52 && buf[1] === 0x49) return 'image/webp';
   if (buf[0] === 0x47 && buf[1] === 0x49) return 'image/gif';

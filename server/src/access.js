@@ -73,3 +73,19 @@ export function canSeeTitle(scope, titleId) {
 export function requireTitle(user, titleId) {
   if (!canSeeTitle(scopeFor(user), titleId)) throw new HttpError(404, 'Titel niet gevonden.');
 }
+
+/**
+ * SQL condition on a tracks row (alias `a`). Music follows the same library
+ * and linked-server permissions as films. It has no age ratings, so an account
+ * with an age limit gets everything except tracks tagged as explicit.
+ */
+export function trackSql(scope, a = 't') {
+  if (scope.all) return '1';
+  let lib = '1';
+  if (scope.libs) {
+    const ids = [...scope.libs].filter(Number.isInteger).join(',');
+    const local = ids ? `(${a}.peer_id IS NULL AND ${a}.library_id IN (${ids}))` : '0';
+    lib = scope.peers ? `(${local} OR ${a}.peer_id IS NOT NULL)` : local;
+  }
+  return scope.maxAge === null ? lib : `(${lib} AND ${a}.explicit = 0)`;
+}
