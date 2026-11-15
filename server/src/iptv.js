@@ -105,6 +105,17 @@ async function fetchChannels(src) {
   }));
 }
 
+/** The coming programmes of a channel from the provider's guide (Xtream only); [] when there is none. */
+export async function guide(channelId, limit = 3) {
+  const c = db.prepare('SELECT c.*, s.kind, s.url surl, s.username, s.password FROM iptv_channels c JOIN iptv_sources s ON s.id = c.source_id WHERE c.id = ?').get(channelId);
+  if (!c || c.kind !== 'xtream') return [];
+  try {
+    const data = JSON.parse(await getText(xtreamApi({ url: c.surl, username: c.username, password: c.password }, { action: 'get_short_epg', stream_id: c.ext_id, limit: String(Math.max(1, Math.min(60, limit))) }), 10000));
+    const b64 = (s) => { try { return Buffer.from(String(s || ''), 'base64').toString('utf8'); } catch { return ''; } };
+    return (data.epg_listings || []).map((p) => ({ title: b64(p.title), description: b64(p.description), start: Number(p.start_timestamp) || 0, end: Number(p.stop_timestamp) || 0 })).filter((p) => p.start > 0 && p.end > p.start);
+  } catch { return []; }
+}
+
 export async function syncSource(src) {
   try {
     const channels = await fetchChannels(src);
@@ -230,14 +241,8 @@ export default async function routes(app) {
 
   // Now/next from the provider's short guide (Xtream only).
   app.get('/api/iptv/:id/epg', { preHandler: noKids }, async (req) => {
-    const c = db.prepare('SELECT c.*, s.kind, s.url surl, s.username, s.password FROM iptv_channels c JOIN iptv_sources s ON s.id = c.source_id WHERE c.id = ?').get(req.params.id);
-    if (!c) throw new HttpError(404, 'Zender niet gevonden.');
-    if (c.kind !== 'xtream') return { programs: [] };
-    try {
-      const data = JSON.parse(await getText(xtreamApi({ url: c.surl, username: c.username, password: c.password }, { action: 'get_short_epg', stream_id: c.ext_id, limit: '3' }), 10000));
-      const b64 = (s) => { try { return Buffer.from(String(s || ''), 'base64').toString('utf8'); } catch { return ''; } };
-      return { programs: (data.epg_listings || []).map((p) => ({ title: b64(p.title), description: b64(p.description), start: Number(p.start_timestamp) || 0, end: Number(p.stop_timestamp) || 0 })) };
-    } catch { return { programs: [] }; }
+    if (!db.prepare('SELECT 1 FROM iptv_channels WHERE id = ?').get(req.params.id)) throw new HttpError(404, 'Zender niet gevonden.');
+    return { programs: await guide(req.params.id, 3) };
   });
 
   app.get('/api/iptv/stream/:id/:sig', async (req, reply) => {

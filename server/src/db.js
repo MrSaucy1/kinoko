@@ -529,6 +529,34 @@ export const MIGRATIONS = [
     addColumn(d, 'users', 'lastfm_session', 'TEXT');       // Last.fm session key
     addColumn(d, 'users', 'lastfm_name', 'TEXT');
   },
+  // 8 — fase 10: live tv recordings.
+  (d) => {
+    d.exec(`
+      CREATE TABLE IF NOT EXISTS record_rules (
+        id INTEGER PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        channel_id INTEGER NOT NULL REFERENCES iptv_channels(id) ON DELETE CASCADE,
+        match TEXT NOT NULL,                 -- part of the programme title
+        created_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS recordings (
+        id INTEGER PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        channel_id INTEGER REFERENCES iptv_channels(id) ON DELETE SET NULL,
+        rule_id INTEGER REFERENCES record_rules(id) ON DELETE SET NULL,
+        channel_name TEXT NOT NULL DEFAULT '',
+        title TEXT NOT NULL,
+        start_at INTEGER NOT NULL,
+        end_at INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'scheduled' CHECK (status IN ('scheduled','recording','done','failed','cancelled')),
+        path TEXT,
+        size INTEGER NOT NULL DEFAULT 0,
+        error TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS recordings_status ON recordings(status, start_at);
+    `);
+  },
 ];
 
 export function migrate(database = db, steps = MIGRATIONS) {

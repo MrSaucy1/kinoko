@@ -19,6 +19,7 @@ import activityRoutes from './activity.js';
 import requestRoutes from './requests.js';
 import musicRoutes from './musicapi.js';
 import musicExtraRoutes from './musicextra.js';
+import dvrRoutes, { tick as dvrTick, resume as dvrResume, applyRules as dvrRules, stopAll as dvrStop } from './dvr.js';
 import { watchLibraries, watchState } from './watcher.js';
 import metadataRoutes, { metaState } from './metadata.js';
 import streamRoutes, { cleanupTranscodes } from './stream.js';
@@ -91,7 +92,7 @@ app.put('/api/admin/settings', { preHandler: requireAdmin }, async (req) => {
   return { ok: true };
 });
 
-for (const r of [authRoutes, libraryRoutes, metadataRoutes, streamRoutes, subtitleRoutes, markerRoutes, catalogRoutes, watchRoutes, federationRoutes, iptvRoutes, remoteRoutes, eventRoutes, backupRoutes, webhookRoutes, trickplayRoutes, listRoutes, wrappedRoutes, activityRoutes, requestRoutes, musicRoutes, musicExtraRoutes]) {
+for (const r of [authRoutes, libraryRoutes, metadataRoutes, streamRoutes, subtitleRoutes, markerRoutes, catalogRoutes, watchRoutes, federationRoutes, iptvRoutes, remoteRoutes, eventRoutes, backupRoutes, webhookRoutes, trickplayRoutes, listRoutes, wrappedRoutes, activityRoutes, requestRoutes, musicRoutes, musicExtraRoutes, dvrRoutes]) {
   await app.register(r);
 }
 
@@ -136,10 +137,14 @@ const rewatch = () => watchLibraries(() => { lastScan = Date.now(); scanAll(); }
 rewatch(); setLibrariesChanged(rewatch);
 setTimeout(() => backupIfDue(), 60_000).unref();
 setInterval(() => backupIfDue(), 3600_000).unref();
+// Recordings: start what is due, and look at the guide for series now and then.
+dvrResume();
+setInterval(() => dvrTick(), 20_000).unref();
+setInterval(() => dvrRules().catch(() => {}), 30 * 60_000).unref();
 purgeSessions(); purgeAudit();
 setInterval(() => purgeAudit(), 6 * 3600_000).unref();
 setInterval(() => purgeSessions(), 6 * 3600_000).unref();
 
-const stop = async () => { cleanupTranscodes(); await app.close(); process.exit(0); };
+const stop = async () => { dvrStop(); cleanupTranscodes(); await app.close(); process.exit(0); };
 process.on('SIGTERM', stop);
 process.on('SIGINT', stop);
