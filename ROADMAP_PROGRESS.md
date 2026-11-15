@@ -177,3 +177,23 @@ Open / niet getest:
 - Geen toestel, geen auto: achtergrondafspelen, melding, Android Auto en spraak zijn alleen op code-niveau gecontroleerd.
 - Eigen icoon voor Kinoko Music ontbreekt.
 - **De build zelf is niet geverifieerd.** Het token van deze werkomgeving mag geen workflow starten (`HTTP 403` op `workflow_dispatch`). Start in GitHub → Actions → Build → "Run workflow" op de branch `feat/music-app` (of een latere fase): die run bouwt alle drie de APK's zonder een release te maken.
+
+## Fase 8 — Spotify-gevoel
+
+- Status: **klaar** (code); geluid en downloads niet op een toestel getest
+- Branch: `feat/music-polish` (vanaf `feat/music-app`)
+- PR: https://github.com/MrSaucy1/kinoko/compare/feat/music-app...feat/music-polish?expand=1 — tekst in `docs/pr/fase-8.md`
+
+Gedaan: gapless + crossfade, ReplayGain (met meting op de server), offline downloads, kwaliteit per netwerk, songteksten, radio/doorspelen, home-mixes, scrobbelen, Kinoko Connect. Migratie 7.
+
+Keuzes:
+- Crossfade met een tweede speler; standaard uit.
+- `services/events.dart` is naar `packages/kinoko_core` verhuisd (beide apps gebruiken het meldingskanaal).
+- Vergelijkbare artiesten alleen via Last.fm; ListenBrainz alleen voor scrobbelen.
+- Nieuwe dependency `connectivity_plus` in `music/`.
+
+Open / niet getest:
+- **Crossfade is niet op een toestel beluisterd.** De overname tussen de twee spelers kan een tikje geven; dat is alleen met oren te beoordelen.
+- Downloads, offline gebruik, songteksten-scherm en Connect in de app: alleen `flutter analyze`.
+- Web: geen songteksten-scherm en geen apparatenlijst in de browser (de browser is wel een Connect-doel).
+- Echte verzoeken naar LRCLIB/ListenBrainz/Last.fm zijn niet gedaan.
