@@ -19,7 +19,7 @@ export function publicUrl(req = null) {
   return '';
 }
 
-async function peerFetch(peer, path, { method = 'GET', body = null, timeout = 30000 } = {}) {
+export async function peerFetch(peer, path, { method = 'GET', body = null, timeout = 30000 } = {}) {
   let r;
   try {
     r = await fetch(peer.url + path, {
@@ -33,7 +33,7 @@ async function peerFetch(peer, path, { method = 'GET', body = null, timeout = 30
   return data;
 }
 
-async function requirePeer(req) {
+export async function requirePeer(req) {
   const h = req.headers.authorization || '';
   const peer = h.startsWith('Peer ') ? db.prepare('SELECT * FROM peers WHERE in_key_hash = ?').get(sha256(h.slice(5))) : null;
   if (!peer) throw new HttpError(401, 'Onbekende of ingetrokken koppeling.');
@@ -43,7 +43,7 @@ async function requirePeer(req) {
 // ---------------------------------------------------------------------------
 // Playing a file that lives on a linked server
 // ---------------------------------------------------------------------------
-const relay = (peer, p) => (typeof p === 'string' && p.startsWith('/api/') ? `/api/peer/${peer.id}/${p.slice(5)}` : p);
+export const relay = (peer, p) => (typeof p === 'string' && p.startsWith('/api/') ? `/api/peer/${peer.id}/${p.slice(5)}` : p);
 
 export async function remotePlay(file, body) {
   const peer = db.prepare('SELECT * FROM peers WHERE id = ?').get(file.peer_id);
@@ -135,8 +135,13 @@ const importCatalog = db.transaction((peer, titles) => {
   return seen.size;
 });
 
+const alsoSync = [];
+/** Other catalogues (music) that travel along with a peer sync. */
+export const onPeerSync = (fn) => alsoSync.push(fn);
+
 export async function syncPeer(peer) {
   if (!peer.out_key) return 0;
+  for (const fn of alsoSync) { try { await fn(peer); } catch (e) { if (!(e instanceof HttpError)) console.error('[sync]', e.message); } }
   try {
     const data = await peerFetch(peer, '/api/federation/catalog', { timeout: 120_000 });
     const n = importCatalog(peer, data.titles || []);
@@ -274,7 +279,7 @@ export default async function routes(app) {
     const peer = db.prepare('SELECT * FROM peers WHERE id = ?').get(req.params.id);
     const rest = req.params['*'];
     // Only ticketed media paths are relayed; they carry their own credential.
-    if (!peer || !/^(stream|hls|subs|trickplay)\//.test(rest)) throw new HttpError(404, 'Niet gevonden.');
+    if (!peer || !/^(stream|hls|subs|trickplay|music\/stream|music\/cover)\//.test(rest)) throw new HttpError(404, 'Niet gevonden.');
     const qs = req.raw.url.includes('?') ? req.raw.url.slice(req.raw.url.indexOf('?')) : '';
     const ctl = new AbortController();
     req.raw.on('close', () => ctl.abort());
