@@ -83,3 +83,23 @@ Open / niet getest:
 - De regel "zet eerst je eigen 2FA aan voordat je het verplicht" zit in `index.js` en heeft geen eigen test.
 - 2FA in de app (inloggen met code, instellen in het profiel) is niet op een toestel geprobeerd. De app toont de sleutel als tekst, geen QR-code.
 - fail2ban zelf is hier niet geïnstalleerd; het filter is alleen tegen de regel-opmaak getest.
+
+## Fase 3 — Kindermodus & beeld
+
+- Status: **klaar**
+- Branch: `feat/viewing` (vanaf `feat/security-features`)
+- PR: https://github.com/MrSaucy1/kinoko/compare/feat/security-features...feat/viewing?expand=1 — tekst in `docs/pr/fase-3.md`
+
+Gedaan: leeftijdsclassificatie, kindermodus, trickplay, HDR→SDR-tonemapping. Migratie 3.
+
+Keuzes:
+- Trickplay standaard uit per bibliotheek.
+- Leeftijd tussen twee Kijkwijzer-stappen → de strengere stap.
+- Live tv uit voor accounts met leeftijdsgrens.
+- `tonemap_opencl`/`libplacebo` niet gebruikt (niet te testen zonder GPU).
+
+Open / niet getest:
+- `tonemap_vaapi` en de hardware-encodepaden met tonemapping: alleen de keuze van de keten is getest, niet op een GPU.
+- Trickplay-weergave in de app (mobiel en tv) niet op een toestel.
+- De eenvoudige kinder-home heeft in web en app geen eigen vormgeving; Watch Night-knop blijft zichtbaar (resultaten zijn wel gefilterd).
+- Cinemeta levert geen classificatie; zonder TMDB-sleutel komt alles van Wikidata of `.nfo`, series hebben daar zelden een waarde.

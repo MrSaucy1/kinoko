@@ -20,7 +20,7 @@ install/  Proxmox-helperscript, installer en de root-beheerhulp
 | **Slimme collecties** | Films die bij elkaar horen (MCU, Spider-Man, Toy Story…) worden automatisch gegroepeerd. |
 | **Home** | Uitgelicht, verder kijken, aanbevelingen, rijen per genre, collecties. |
 | **Versies** | Staat een film op meerdere (gekoppelde) servers, dan kiest Kinoko de hoogste bitrate; je ziet per versie van welke server hij komt en kunt zelf wisselen. |
-| **Transcoderen** | Lagere kwaliteit wordt live omgezet (HLS) met VA-API, Quick Sync, NVENC of V4L2; valt terug op software. |
+| **Transcoderen** | Lagere kwaliteit wordt live omgezet (HLS) met VA-API, Quick Sync, NVENC of V4L2; valt terug op software. HDR wordt daarbij omgezet naar SDR. |
 | **Samen kijken** | Uitnodigen via link of code; afspelen, pauzeren en spoelen is voor iedereen gelijk. Gasten hebben geen account nodig. |
 | **Servers koppelen** | Koppellink maken, bij de ander plakken: elkaars bibliotheken verschijnen als eigen titels. |
 | **Intro overslaan / volgende aflevering** | Intro's en aftiteling worden herkend via hoofdstukken en geluidsvergelijking binnen een seizoen. |
@@ -35,6 +35,8 @@ install/  Proxmox-helperscript, installer en de root-beheerhulp
 | **Limiet per gebruiker** | De beheerder stelt per account een maximale streamkwaliteit in. |
 | **Back-ups** | Dagelijks een kopie van de database; in het beheer te maken en te downloaden. |
 | **Meldingen** | Webhooks (Discord of algemene JSON) bij een nieuwe titel, een kijker, een afgeronde scan of een fout. |
+| **Kindermodus** | Leeftijdsclassificatie per titel (Kijkwijzer: AL/6/9/12/14/16/18, uit TMDB, Wikidata of `.nfo`). Per gebruiker een maximale leeftijd; alles daarboven is overal verborgen. Optioneel een eenvoudige home. |
+| **Spoel-previews** | Voorbeeldplaatjes bij het spoelen in web, mobiel en tv; per bibliotheek aan te zetten. |
 | **Tweestapsverificatie** | Optioneel per account (TOTP, elke authenticator-app), met herstelcodes. De beheerder kan het verplichten voor beheerders. |
 | **Rechten per bibliotheek** | Per gebruiker kiest de beheerder welke bibliotheken (en gekoppelde servers) zichtbaar zijn; de rest bestaat voor die gebruiker niet. |
 | **Logboek** | Inlogpogingen, wijzigingen aan gebruikers en instellingen, koppelingen en updates; te filteren in het beheer. |
@@ -117,5 +119,5 @@ proxy elders: zet `KINOKO_TRUST_PROXY` op het adres van die proxy.
 - Een apparaat dat 90 dagen niet is gebruikt, wordt vanzelf uitgelogd (aan te passen in Beheer → Overzicht). Onder Apparaten zie je waar je bent ingelogd en log je een apparaat uit.
 - Posters en afbeeldingen zijn zonder inloggen op te vragen; al het andere vraagt een account, een gast-token of een tijdelijke afspeellink.
 - Streams van een gekoppelde server lopen via je eigen server.
-- HDR-naar-SDR-tonemapping bij transcoderen zit er nog niet in.
+- HDR (PQ/HLG) wordt bij transcoderen omgezet naar SDR: op VA-API met `tonemap_vaapi`, anders in software met `zscale`+`tonemap` (ffmpeg met libzimg, standaard op Debian/Ubuntu). Kan dat op jouw ffmpeg niet, dan valt Kinoko terug op omzetten zonder tonemapping. Direct afspelen blijft HDR.
 - Live tv in de browser werkt alleen bij providers die HLS aanbieden; in de apps speelt alles.
