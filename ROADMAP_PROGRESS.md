@@ -139,3 +139,22 @@ Open / niet getest:
 - Doorsturen is getest tegen een nagemaakte Radarr, niet tegen een echte Radarr of Sonarr.
 - GPU-belasting: Intel wordt niet uitgelezen.
 - Stopmelding en verzoeken in de app niet op een toestel.
+
+## Fase 6 — Muziek: server
+
+- Status: **klaar**
+- Branch: `feat/music-server` (vanaf `feat/admin`)
+- PR: https://github.com/MrSaucy1/kinoko/compare/feat/admin...feat/music-server?expand=1 — tekst in `docs/pr/fase-6.md`
+
+Gedaan: bibliotheektype muziek, scanner, schema, optionele online metadata, streamen (origineel + Opus/AAC), API, rechten, federatie, webweergave. Migratie 6.
+
+Keuzes:
+- Migratie 6 herbouwt `libraries` (CHECK-constraint); `migrate()` kent daarvoor stappen met `fkOff`.
+- Omgezette nummers in een cache (`KINOKO_DATA/music`, standaard 2 GB) in plaats van live transcoderen.
+- Kindermodus bij muziek: alles behalve nummers met de tag "explicit".
+- Uitbreidpunten voor latere fases: `addHomeRows` (mixes), `onPlay` (scrobbelen), `onMusicScanned`, `embeddedLyrics`.
+
+Open / niet getest:
+- Echte verzoeken naar MusicBrainz/Cover Art Archive/Wikidata zijn niet gedaan (alleen nagemaakte antwoorden).
+- Federatie van muziek: import en export zijn getest, het afspelen via een tweede echte server niet.
+- Web: playlist maken/hernoemen gebruikt het `prompt`-venster van de browser.

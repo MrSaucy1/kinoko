@@ -5,7 +5,7 @@ Android TV-app. Zwart en paars, Netflix-achtig, en gemaakt om met vrienden te
 delen.
 
 ```
-server/   Node.js-server (API, scanner, transcoding, samen kijken, koppelingen)
+server/   Node.js-server (API, scanner, transcoding, samen kijken, koppelingen, muziek)
 web/      Web-GUI: onboarding, kijken in de browser, beheer (geen build-stap)
 app/      Flutter-app — één codebase, twee varianten: mobiel en tv
 install/  Proxmox-helperscript, installer en de root-beheerhulp
@@ -29,6 +29,7 @@ install/  Proxmox-helperscript, installer en de root-beheerhulp
 | **Watch Night** | Thema op basis van seizoen/feestdag en drie gedobbelde films. Samen stemmen: de winnaar start voor iedereen in de kamer. |
 | **Lijsten** | Lijsten met een naam, te delen met andere gebruikers om te bekijken of samen te vullen. |
 | **Jouw jaar** | Kinoko Wrapped: uren, top-titels, genres, langste sessie en favoriete kijkdag. Privé, tot je zelf een deellink maakt. |
+| **Muziek** | Eigen muziekbibliotheek: tags en hoezen uit de bestanden, ontbrekende hoezen en artiestfoto's optioneel via MusicBrainz/Cover Art Archive/Wikidata. Albums, artiesten, genres, zoeken met typfouten, playlists (privé of gedeeld), likes, wachtrij en geschiedenis. Afspelen in het origineel of omgezet naar Opus/AAC (96/160/320 kbps). |
 | **Live tv** | Xtream Codes of M3U, één keer ingesteld door de beheerder. |
 | **Extra's** | Trailers, featurettes en making-ofs (`Extras/`, `Trailers/`, `Film-trailer.mkv`…) staan op de pagina van de titel. |
 | **Nieuwe bestanden** | Mappen worden bewaakt: een nieuw of verwijderd bestand is binnen ongeveer een minuut verwerkt. De periodieke scan blijft als vangnet voor netwerkschijven. |
