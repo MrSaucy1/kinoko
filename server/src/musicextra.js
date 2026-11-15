@@ -10,6 +10,7 @@ import { scopeFor, trackSql } from './access.js';
 import { onMusicScanned, embeddedLyrics, norm } from './music.js';
 import { requireTrack, tracksByIds, addHomeRows, onPlay } from './musicapi.js';
 import { players, sendTo } from './events.js';
+import { addWrappedSection } from './wrapped.js';
 
 const UA = `Kinoko/${config.version} ( https://github.com/MrSaucy1/kinoko )`;
 
@@ -201,6 +202,34 @@ onPlay((user, track, seconds) => {
   }
   if (u.lastfm_session) lastfm({ method: 'track.scrobble', sk: u.lastfm_session, artist: m.artist || '', track: track.title, album: m.album || '', timestamp: String(at), duration: String(Math.round(track.duration)) }).catch(() => {});
 });
+
+// ---------------------------------------------------------------------------
+// Wrapped: the music half of the yearly overview
+// ---------------------------------------------------------------------------
+export function musicWrapped(userId, year) {
+  const from = Math.floor(new Date(year, 0, 1).getTime() / 1000), to = Math.floor(new Date(year + 1, 0, 1).getTime() / 1000);
+  const rows = db.prepare(`SELECT p.track_id, p.seconds, t.title, t.artist_id, ar.name artist FROM music_plays p JOIN tracks t ON t.id = p.track_id JOIN artists ar ON ar.id = t.artist_id
+    WHERE p.user_id = ? AND p.at >= ? AND p.at < ?`).all(userId, from, to);
+  const total = rows.reduce((s, r) => s + r.seconds, 0);
+  if (total < 60) return { music: { empty: true } };
+  const artists = new Map(), tracks = new Map(), genres = new Map();
+  const genreOf = db.prepare('SELECT g.name FROM track_genres tg JOIN genres g ON g.id = tg.genre_id WHERE tg.track_id = ?');
+  const cache = new Map();
+  for (const r of rows) {
+    const a = artists.get(r.artist_id) || { name: r.artist, seconds: 0 }; a.seconds += r.seconds; artists.set(r.artist_id, a);
+    const t = tracks.get(r.track_id) || { title: r.title, artist: r.artist, plays: 0, seconds: 0 }; t.seconds += r.seconds; if (r.seconds >= 30) t.plays++; tracks.set(r.track_id, t);
+    if (!cache.has(r.track_id)) cache.set(r.track_id, genreOf.all(r.track_id).map((g) => g.name));
+    for (const g of cache.get(r.track_id)) genres.set(g, (genres.get(g) || 0) + r.seconds);
+  }
+  const top = (map, key, n) => [...map.values()].sort((x, y) => y[key] - x[key]).slice(0, n);
+  return { music: {
+    empty: false, seconds: Math.round(total), tracks: tracks.size, artists: artists.size,
+    topArtists: top(artists, 'seconds', 5).map((a) => ({ name: a.name, seconds: Math.round(a.seconds) })),
+    topTracks: top(tracks, 'plays', 5).filter((t) => t.plays > 0).map((t) => ({ title: t.title, artist: t.artist, plays: t.plays })),
+    topGenres: [...genres.entries()].sort((x, y) => y[1] - x[1]).slice(0, 5).map(([name, sec]) => ({ name, share: Math.round((sec / total) * 100) })),
+  } };
+}
+addWrappedSection(musicWrapped);
 
 export default async function routes(app) {
   // ---- lyrics ----------------------------------------------------------------

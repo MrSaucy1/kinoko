@@ -186,3 +186,21 @@ test('Kinoko Connect: your own players only, commands reach one device', async (
   drops.forEach((d) => d());
   assert.equal((await call(app, ann, 'GET', '/api/music/devices')).json().devices.length, 0);
 });
+
+test('Wrapped includes music: minutes, top artists, tracks and genres of the year, own data only', async () => {
+  const { wrapped } = await import('../src/wrapped.js');
+  const u = mkUser('user', 'Luisteraar'), other = mkUser('user', 'Ander');
+  const a = mk('Wrapped Band', 'W', 'Hit', { genre: 'Indiepop' }), b = mk('Wrapped Band', 'W', 'B-kant', { genre: 'Indiepop' }), c = mk('Tweede Band', 'T', 'Lied', { genre: 'Jazz' });
+  const at = (y, m) => Math.floor(new Date(y, m, 10, 12).getTime() / 1000);
+  const play = (user, track, seconds, when) => db.prepare('INSERT INTO music_plays (user_id, track_id, at, seconds) VALUES (?,?,?,?)').run(user.id, track, when, seconds);
+  for (let i = 0; i < 3; i++) play(u, a, 200, at(2025, 3));
+  play(u, b, 20, at(2025, 4)); play(u, c, 180, at(2025, 5));
+  play(u, c, 999, at(2024, 5)); play(other, c, 5000, at(2025, 5));
+  const w = wrapped(u.id, 2025);
+  assert.equal(w.empty, false, 'a year with only music is not empty');
+  assert.deepEqual([w.music.seconds, w.music.tracks, w.music.artists], [800, 3, 2]);
+  assert.deepEqual(w.music.topArtists, [{ name: 'Wrapped Band', seconds: 620 }, { name: 'Tweede Band', seconds: 180 }]);
+  assert.deepEqual(w.music.topTracks, [{ title: 'Hit', artist: 'Wrapped Band', plays: 3 }, { title: 'Lied', artist: 'Tweede Band', plays: 1 }]);
+  assert.deepEqual(w.music.topGenres, [{ name: 'Indiepop', share: 78 }, { name: 'Jazz', share: 23 }]);
+  assert.equal(wrapped(u.id, 2023).music.empty, true);
+});
