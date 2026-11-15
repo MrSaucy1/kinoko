@@ -13,6 +13,8 @@ import eventRoutes from './events.js';
 import backupRoutes, { backupIfDue } from './backup.js';
 import webhookRoutes from './webhooks.js';
 import trickplayRoutes, { trickState } from './trickplay.js';
+import listRoutes from './lists.js';
+import wrappedRoutes from './wrapped.js';
 import { watchLibraries, watchState } from './watcher.js';
 import metadataRoutes, { metaState } from './metadata.js';
 import streamRoutes, { cleanupTranscodes } from './stream.js';
@@ -85,7 +87,7 @@ app.put('/api/admin/settings', { preHandler: requireAdmin }, async (req) => {
   return { ok: true };
 });
 
-for (const r of [authRoutes, libraryRoutes, metadataRoutes, streamRoutes, subtitleRoutes, markerRoutes, catalogRoutes, watchRoutes, federationRoutes, iptvRoutes, remoteRoutes, eventRoutes, backupRoutes, webhookRoutes, trickplayRoutes]) {
+for (const r of [authRoutes, libraryRoutes, metadataRoutes, streamRoutes, subtitleRoutes, markerRoutes, catalogRoutes, watchRoutes, federationRoutes, iptvRoutes, remoteRoutes, eventRoutes, backupRoutes, webhookRoutes, trickplayRoutes, listRoutes, wrappedRoutes]) {
   await app.register(r);
 }
 

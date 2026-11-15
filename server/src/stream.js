@@ -10,6 +10,7 @@ import { requireUser, requireAdmin, tokenFromRequest, sessionId } from './auth.j
 import { notifyUser } from './events.js';
 import { emit } from './webhooks.js';
 import { requireFile, requireTitle, scopeFor, canSeeExtra } from './access.js';
+import { logWatch } from './watchlog.js';
 
 export const SEG = 4; // seconds per HLS segment
 export const QUALITIES = {
@@ -377,7 +378,10 @@ export default async function routes(app) {
     const { titleId, episodeId = 0, position = 0, duration = 0, watched, paused } = req.body || {};
     requireTitle(req.user, titleId);
     const key = [req.user.id, Number(titleId), Number(episodeId) || 0];
-    const prev = db.prepare('SELECT watched FROM progress WHERE user_id = ? AND title_id = ? AND episode_id = ?').get(...key);
+    const prev = db.prepare('SELECT watched, position, updated_at FROM progress WHERE user_id = ? AND title_id = ? AND episode_id = ?').get(...key);
+    // Viewing time for the yearly overview: only forward steps that fit the time that really passed count.
+    const step = Number(position) - (prev ? prev.position : 0), wall = prev ? now() - prev.updated_at : 0;
+    if (prev && step > 0 && step <= 120 && wall <= 180) logWatch(req.user.id, key[1], key[2], Math.min(step, wall + 5));
     // Explicit true/false marks (un)watched; otherwise it follows the position.
     const finished = watched === true || (watched === undefined && duration > 0 && position / duration > 0.92);
     const flag = watched === false ? 0 : finished ? 1 : (prev ? prev.watched : 0);
