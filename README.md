@@ -8,6 +8,8 @@ delen.
 server/   Node.js-server (API, scanner, transcoding, samen kijken, koppelingen, muziek)
 web/      Web-GUI: onboarding, kijken in de browser, beheer (geen build-stap)
 app/      Flutter-app — één codebase, twee varianten: mobiel en tv
+music/    Kinoko Music: de muziek-app (telefoon, Android Auto)
+packages/ kinoko_core: code die beide apps delen (API-client, thema, inlogscherm)
 install/  Proxmox-helperscript, installer en de root-beheerhulp
 ```
 
@@ -30,6 +32,7 @@ install/  Proxmox-helperscript, installer en de root-beheerhulp
 | **Lijsten** | Lijsten met een naam, te delen met andere gebruikers om te bekijken of samen te vullen. |
 | **Jouw jaar** | Kinoko Wrapped: uren, top-titels, genres, langste sessie en favoriete kijkdag. Privé, tot je zelf een deellink maakt. |
 | **Muziek** | Eigen muziekbibliotheek: tags en hoezen uit de bestanden, ontbrekende hoezen en artiestfoto's optioneel via MusicBrainz/Cover Art Archive/Wikidata. Albums, artiesten, genres, zoeken met typfouten, playlists (privé of gedeeld), likes, wachtrij en geschiedenis. Afspelen in het origineel of omgezet naar Opus/AAC (96/160/320 kbps). |
+| **Kinoko Music** | Muziek-app in Spotify-stijl: home, zoeken, bibliotheek, album- en artiestpagina's, speler met wachtrij (slepen, verwijderen, speel hierna), shuffle/herhalen, liken, playlists maken en delen. Android Auto met spraakzoeken. |
 | **Live tv** | Xtream Codes of M3U, één keer ingesteld door de beheerder. |
 | **Extra's** | Trailers, featurettes en making-ofs (`Extras/`, `Trailers/`, `Film-trailer.mkv`…) staan op de pagina van de titel. |
 | **Nieuwe bestanden** | Mappen worden bewaakt: een nieuw of verwijderd bestand is binnen ongeveer een minuut verwerkt. De periodieke scan blijft als vangnet voor netwerkschijven. |
@@ -82,7 +85,25 @@ De APK's staan bij de [release `latest`](../../releases/tag/latest):
 `kinoko-vX.Y.Z.apk` (telefoon/tablet) en `kinoko-tv-vX.Y.Z.apk` (Android TV).
 Bij de eerste start vul je het adres van je server in.
 
+Voor muziek is er een eigen app: `kinoko-music-vX.Y.Z.apk`. Die speelt door op
+de achtergrond, met bediening in de melding, op het vergrendelscherm en via
+koptelefoon- of Bluetooth-knoppen.
+
 De apps worden door GitHub Actions gebouwd (`.github/workflows/build.yml`).
+
+### Kinoko Music in de auto (Android Auto)
+
+Kinoko Music komt niet uit de Play Store, en Android Auto toont standaard
+alleen apps die daar vandaan komen. Eén keer instellen op je telefoon:
+
+1. Open de instellingen van **Android Auto** (Instellingen → Verbonden apparaten → Android Auto, of zoek op "Android Auto").
+2. Scroll naar beneden en tik **tien keer op "Versie"**, tot er staat dat de ontwikkelaarsinstellingen aan zijn.
+3. Tik rechtsboven op de drie puntjes → **Ontwikkelaarsinstellingen**.
+4. Zet **Onbekende bronnen** aan.
+5. Verbind je telefoon opnieuw met de auto. Kinoko Music staat nu bij de media-apps.
+
+In de auto blader je door Home, Playlists, Albums, Artiesten en Gelikete
+nummers, en werkt spraak: "speel Queen af op Kinoko Music".
 
 ## Ontwikkelen
 
@@ -92,6 +113,7 @@ KINOKO_DATA=./data npm start        # http://localhost:8096
 npm test
 
 cd app && flutter pub get && flutter analyze && flutter test
+cd music && flutter pub get && flutter analyze && flutter test
 ```
 
 Instellingen via omgevingsvariabelen: `KINOKO_PORT`, `KINOKO_DATA`,

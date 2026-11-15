@@ -158,3 +158,21 @@ Open / niet getest:
 - Echte verzoeken naar MusicBrainz/Cover Art Archive/Wikidata zijn niet gedaan (alleen nagemaakte antwoorden).
 - Federatie van muziek: import en export zijn getest, het afspelen via een tweede echte server niet.
 - Web: playlist maken/hernoemen gebruikt het `prompt`-venster van de browser.
+
+## Fase 7 — Kinoko Music-app: basis + Android Auto
+
+- Status: **klaar** (code); niet op een toestel getest
+- Branch: `feat/music-app` (vanaf `feat/music-server`)
+- PR: https://github.com/MrSaucy1/kinoko/compare/feat/music-server...feat/music-app?expand=1 — tekst in `docs/pr/fase-7.md`
+
+Gedaan: `packages/kinoko_core`, de app in `music/` (afspelen, Android Auto, UI), batch-afspeellinks op de server, CI bouwt de muziek-APK.
+
+Keuzes:
+- `app/lib/core/api.dart`, `theme.dart` en `widgets/common.dart` zijn doorverwijzingen naar het package.
+- De bestaande app houdt zijn onboarding; de muziek-app gebruikt `SignInScreen` uit het package.
+- Uitbreidpunten in de app voor fase 8: `playerExtras`, `collectionExtras`, `settingsExtras`.
+- CI: release alleen op `main`; `workflow_dispatch` op een branch bouwt alleen.
+
+Open / niet getest:
+- Geen toestel, geen auto: achtergrondafspelen, melding, Android Auto en spraak zijn alleen op code-niveau gecontroleerd.
+- Eigen icoon voor Kinoko Music ontbreekt.
