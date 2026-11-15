@@ -33,7 +33,26 @@ export async function startPlayback(opts) {
   const video = h('video', { playsInline: true, preload: 'auto', crossOrigin: 'anonymous' });
   const title = h('h2'), sub = h('small');
   const fill = h('div.fill'), buf = h('div.buf'), knob = h('div.knob'), rail = h('div.rail', buf, fill);
-  const seek = h('div.p-seek', rail, knob);
+  const thumbPic = h('i'), thumbTime = h('span');
+  const thumb = h('div.p-thumb.hide', thumbPic, thumbTime);
+  const seek = h('div.p-seek', rail, knob, thumb);
+  // Hovering the seek bar shows the time, and a preview picture when the server has made them.
+  function showThumb(clientX) {
+    const r = rail.getBoundingClientRect(), d = duration();
+    if (!d || !r.width) return;
+    const f = Math.max(0, Math.min(1, (clientX - r.left) / r.width)), t = f * d;
+    const tp = play && play.trickplay;
+    thumbTime.textContent = fmtTime(t);
+    if (tp) {
+      const per = tp.cols * tp.rows, idx = Math.min(tp.count - 1, Math.floor(t / tp.interval)), pos = idx % per;
+      Object.assign(thumbPic.style, { display: 'block', width: `${tp.width}px`, height: `${tp.height}px`, backgroundImage: `url(${tp.base}${Math.floor(idx / per) + 1}.jpg)`, backgroundPosition: `-${(pos % tp.cols) * tp.width}px -${Math.floor(pos / tp.cols) * tp.height}px` });
+    } else thumbPic.style.display = 'none';
+    const half = (tp ? tp.width : 60) / 2 + 6;
+    thumb.style.left = `${Math.max(half, Math.min(r.width - half, f * r.width))}px`;
+    thumb.classList.remove('hide');
+  }
+  seek.addEventListener('mousemove', (e) => showThumb(e.clientX));
+  seek.addEventListener('mouseleave', () => thumb.classList.add('hide'));
   const time = h('span.time', '0:00 / 0:00');
   const playBtn = h('button', { 'aria-label': 'Afspelen/pauzeren', onclick: () => toggle() }, icon('play'));
   const nextBtn = h('button.hide', { 'aria-label': 'Volgende aflevering', title: 'Volgende aflevering', onclick: () => goNext() }, icon('next'));
@@ -80,7 +99,7 @@ export async function startPlayback(opts) {
 
   // seek bar
   function seekTo(clientX) { const r = rail.getBoundingClientRect(); const f = Math.max(0, Math.min(1, (clientX - r.left) / r.width)); video.currentTime = f * duration(); draw(); }
-  seek.addEventListener('pointerdown', (e) => { seek.setPointerCapture(e.pointerId); seekTo(e.clientX); const mv = (ev) => seekTo(ev.clientX); seek.addEventListener('pointermove', mv); seek.addEventListener('pointerup', () => seek.removeEventListener('pointermove', mv), { once: true }); });
+  seek.addEventListener('pointerdown', (e) => { seek.setPointerCapture(e.pointerId); seekTo(e.clientX); const mv = (ev) => { seekTo(ev.clientX); showThumb(ev.clientX); }; seek.addEventListener('pointermove', mv); seek.addEventListener('pointerup', (ev) => { seek.removeEventListener('pointermove', mv); if (ev.pointerType !== 'mouse') thumb.classList.add('hide'); }, { once: true }); });
 
   function draw() {
     const d = duration(), t = video.currentTime;

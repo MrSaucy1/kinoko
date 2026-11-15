@@ -133,6 +133,15 @@ class _DetailScreenState extends State<DetailScreen> {
           Wrap(spacing: 10, runSpacing: 6, crossAxisAlignment: WrapCrossAlignment.center, children: [
             if (rating != null) Row(mainAxisSize: MainAxisSize.min, children: [const Icon(Icons.star_rounded, color: K.gold, size: 18), Text(' ${rating.toStringAsFixed(1)}', style: const TextStyle(fontWeight: FontWeight.w700))]),
             if (d['year'] != null) Text('${d['year']}', style: const TextStyle(color: K.lilac, fontWeight: FontWeight.w600)),
+            if (d['age'] != null)
+              Semantics(
+                label: 'Minimumleeftijd ${d['age']}',
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                  decoration: BoxDecoration(border: Border.all(color: K.lilac, width: 1.5), borderRadius: BorderRadius.circular(6)),
+                  child: Text('${d['age']}', style: const TextStyle(color: K.lilac, fontWeight: FontWeight.w800, fontSize: 12)),
+                ),
+              ),
             if (isMovie && d['runtime'] != null) Text(fmtRuntime(d['runtime'] as num?), style: const TextStyle(color: K.lilac, fontWeight: FontWeight.w600)),
             if (!isMovie) Text('${seasons.length} seizoen${seasons.length == 1 ? '' : 'en'}', style: const TextStyle(color: K.lilac, fontWeight: FontWeight.w600)),
             if (curVersion != null && isMovie) Badge2(curVersion['resolution'].toString()),

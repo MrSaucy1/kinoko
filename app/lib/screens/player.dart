@@ -67,6 +67,8 @@ class _PlayerScreenState extends State<PlayerScreen> with TickerProviderStateMix
   int _audio = 0;
   bool _audioChosen = false;
   int _subOffsetMs = 0;
+  double? _previewAt;
+  Timer? _previewTimer;
   Timer? _offsetSave;
   Json? _play;
   String _title = '';
@@ -143,6 +145,7 @@ class _PlayerScreenState extends State<PlayerScreen> with TickerProviderStateMix
     PlayerScreen.open--;
     _report();
     _offsetSave?.cancel();
+    _previewTimer?.cancel();
     _hideTimer?.cancel();
     _progressTimer?.cancel();
     _toastTimer?.cancel();
@@ -474,6 +477,14 @@ class _PlayerScreenState extends State<PlayerScreen> with TickerProviderStateMix
     final s = seconds.clamp(0.0, max).toDouble();
     _player.seek(Duration(milliseconds: (s * 1000).round()));
     _room?.seek(s);
+    // With a remote there is no dragging: show the preview for a moment after each jump.
+    if (Device.isTv && _play?['trickplay'] is Map) {
+      _previewTimer?.cancel();
+      setState(() => _previewAt = s);
+      _previewTimer = Timer(const Duration(milliseconds: 1400), () {
+        if (mounted) setState(() => _previewAt = null);
+      });
+    }
     _wake();
   }
 
@@ -827,6 +838,8 @@ class _PlayerScreenState extends State<PlayerScreen> with TickerProviderStateMix
                   ignoring: !_controls,
                   child: AnimatedOpacity(opacity: _controls ? 1 : 0, duration: const Duration(milliseconds: 300), child: _controlsView()),
                 ),
+                if (_previewAt != null && _play?['trickplay'] is Map)
+                  Positioned(left: 0, right: 0, bottom: Device.isTv ? 150 : 110, child: Center(child: IgnorePointer(child: _TrickThumb(_play!['trickplay'] as Json, _previewAt!)))),
                 if (_inIntro && !_isLive) _skipIntro(),
                 if (_upNext) _upNextCard(),
                 for (final r in _reactions) _reactionView(r),
@@ -918,9 +931,15 @@ class _PlayerScreenState extends State<PlayerScreen> with TickerProviderStateMix
                           value: value,
                           max: d,
                           onChangeStart: (v) => _hideTimer?.cancel(),
-                          onChanged: (v) => setState(() => _dragging = v),
+                          onChanged: (v) => setState(() {
+                            _dragging = v;
+                            _previewAt = v;
+                          }),
                           onChangeEnd: (v) {
-                            setState(() => _dragging = null);
+                            setState(() {
+                              _dragging = null;
+                              _previewAt = null;
+                            });
                             _seekTo(v);
                           },
                         ),
@@ -1170,4 +1189,46 @@ class _RingPainter extends CustomPainter {
 
 extension on String {
   String ifEmpty(String other) => isEmpty ? other : this;
+}
+
+/// One thumbnail out of the server's preview sheets, for the position being sought.
+class _TrickThumb extends StatelessWidget {
+  final Json info;
+  final double seconds;
+  const _TrickThumb(this.info, this.seconds);
+
+  @override
+  Widget build(BuildContext context) {
+    final w = numOf(info['width']), h = numOf(info['height']);
+    final cols = (info['cols'] as num).toInt(), rows = (info['rows'] as num).toInt();
+    final count = math.max(1, (info['count'] as num).toInt()), interval = math.max(1.0, numOf(info['interval']));
+    final idx = math.min(count - 1, seconds ~/ interval), per = cols * rows, pos = idx % per;
+    final url = api.abs('${info['base']}${idx ~/ per + 1}.jpg')!;
+    return Column(mainAxisSize: MainAxisSize.min, children: [
+      Container(
+        width: w,
+        height: h,
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.white70, width: 2)),
+        // The sheet is drawn at full size and shifted so only the wanted cell shows.
+        child: OverflowBox(
+          alignment: Alignment.topLeft,
+          minWidth: w * cols,
+          maxWidth: w * cols,
+          minHeight: h * rows,
+          maxHeight: h * rows,
+          child: Transform.translate(
+            offset: Offset(-(pos % cols) * w, -(pos ~/ cols) * h),
+            child: Image.network(url, width: w * cols, height: h * rows, fit: BoxFit.fill, gaplessPlayback: true, errorBuilder: (_, __, ___) => const SizedBox.shrink()),
+          ),
+        ),
+      ),
+      const SizedBox(height: 6),
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(6)),
+        child: Text(fmtTime(seconds), style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+      ),
+    ]);
+  }
 }

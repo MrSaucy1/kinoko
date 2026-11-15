@@ -48,6 +48,7 @@ function librariesPanel() {
     box.replaceChildren(
       d.libraries.length ? h('div.list', d.libraries.map((l) => h('div.list-item', h('div.option', { style: { width: 'auto', padding: '8px', border: 0, background: 'none', cursor: 'default' } }, h('div.ico', icon(l.type === 'movies' ? 'film' : 'tv'))),
         h('div.grow', h('b', l.name), h('small', l.paths.join(' · ')), h('small', `${l.titles} titels · ${l.files} bestanden${l.shared ? ' · gedeeld met koppelingen' : ''}`)),
+        h('label.row', { title: 'Kleine voorbeeldplaatjes bij het spoelen. Het maken kost eenmalig rekentijd per bestand.' }, h('span.switch', h('input', { type: 'checkbox', checked: l.trickplay, onchange: (e) => act(null, async () => { await api(`/api/admin/libraries/${l.id}`, { method: 'PUT', body: { trickplay: e.target.checked } }); toast(e.target.checked ? 'Previews worden op de achtergrond gemaakt' : 'Previews uitgezet'); }) }), h('i')), h('small', 'Spoel-previews')),
         h('button.btn.sm.danger', { onclick: async () => { if (await confirmDialog('Bibliotheek verwijderen?', `"${l.name}" verdwijnt uit Kinoko. Je bestanden op schijf blijven staan.`, 'Verwijderen')) { await api(`/api/admin/libraries/${l.id}`, { method: 'DELETE' }); draw(); } } }, icon('trash')))))
         : h('p.muted', 'Nog geen bibliotheken. Voeg een map met films of series toe.'),
       scan.running && h('div.note', h('b', scan.phase === 'scan' ? `Scannen: ${scan.library}` : `Bezig met ${scan.phase}…`), scan.total > 0 && scan.phase === 'scan' && h('div.progress', { style: { marginTop: '10px' } }, h('i', { style: { width: `${(scan.done / scan.total) * 100}%` } }))),
@@ -147,7 +148,7 @@ function remotePanel(compact = false) {
 const PAGES = {
   '': ['Overzicht', 'home', dashboard],
   bibliotheken: ['Bibliotheken', 'folder', () => page('Bibliotheken', 'Mappen met films en series. Kinoko scant ze automatisch en haalt posters, cast en genres erbij.', librariesPanel())],
-  metadata: ['Metadata', 'tag', () => page('Metadata', 'Waar titels, posters, acteurs en genres vandaan komen.', metadataPanel())],
+  metadata: ['Metadata', 'tag', () => page('Metadata', 'Waar titels, posters, acteurs en genres vandaan komen.', metadataPanel(), ratingsSection())],
   transcoderen: ['Transcoderen', 'chip', () => page('Transcoderen', 'Als iemand een lagere kwaliteit kiest, zet de server de video live om — het liefst op de videokaart.', transcodePanel(), markersSection())],
   gebruikers: ['Gebruikers', 'users', usersPage],
   servers: ['Gekoppelde servers', 'server', peersPage],
@@ -212,19 +213,45 @@ function markersSection() {
   return box;
 }
 
+// Age ratings: how many titles have one, and a way to set the missing ones by hand.
+function ratingsSection() {
+  const box = h('div.section');
+  const AGES = [[0, 'AL'], [6, '6'], [9, '9'], [12, '12'], [14, '14'], [16, '16'], [18, '18']];
+  async function draw() {
+    let d; try { d = await api('/api/admin/ratings'); } catch { return; }
+    const label = (a) => (a === null ? 'Onbekend' : a === 0 ? 'AL' : String(a));
+    box.replaceChildren(h('h2', 'Leeftijdsclassificatie'), h('div.card-box.stack',
+      h('p.muted', 'Kinoko haalt de classificatie op (TMDB als er een sleutel is, anders Wikidata of het .nfo-bestand) en zet die om naar Kijkwijzer: AL, 6, 9, 12, 14, 16 of 18. De kindermodus per gebruiker stel je in bij Gebruikers → Toegang.'),
+      h('div.row.wrap', d.counts.map((c) => h('span.chip', `${label(c.age)}: ${c.n}`))),
+      d.unrated.length ? h('details', h('summary', { style: { cursor: 'pointer' } }, `${d.unrated.length} titels zonder classificatie — zelf instellen`),
+        h('div.list', { style: { marginTop: '10px' } }, d.unrated.map((t) => h('div.list-item', h('div.grow', h('b', t.title), h('small', [t.kind === 'show' ? 'Serie' : 'Film', t.year].filter(Boolean).join(' · '))),
+          h('select.input', { 'aria-label': `Leeftijd voor ${t.title}`, style: { width: 'auto', height: '34px' }, onchange: (e) => act(null, async () => { await api(`/api/admin/titles/${t.id}/age`, { method: 'PUT', body: { age: e.target.value === '' ? null : Number(e.target.value) } }); toast('Opgeslagen'); }) },
+            h('option', { value: '' }, 'Onbekend'), AGES.map(([v, l]) => h('option', { value: v }, l))))))) : h('p.muted', 'Alle titels hebben een classificatie.')));
+  }
+  draw();
+  return box;
+}
+
 // Which libraries one user may see.
 function accessDialog(u, libraries, after) {
   const all = h('input', { type: 'checkbox', checked: u.allLibraries });
   const peers = h('input', { type: 'checkbox', checked: u.allowPeers });
   const boxes = libraries.map((l) => [l.id, h('input', { type: 'checkbox', checked: u.allLibraries || u.libraries.includes(l.id) })]);
   const list = h('div.stack', { style: { gap: '8px', paddingLeft: '4px' } }, libraries.map((l, i) => h('label.row', boxes[i][1], h('span', `${l.name} (${l.type === 'movies' ? 'films' : l.type === 'shows' ? 'series' : 'muziek'})`))));
+  const age = h('select.input', { style: { width: 'auto' } }, h('option', { value: '', selected: u.maxAge === null || u.maxAge === undefined }, 'Geen leeftijdsgrens'),
+    [[0, 'AL'], [6, '6'], [9, '9'], [12, '12'], [14, '14'], [16, '16'], [18, '18']].map(([v, l]) => h('option', { value: v, selected: u.maxAge === v }, v === 0 ? 'Alleen AL (alle leeftijden)' : `Tot en met ${l} jaar`)));
+  const unrated = h('input', { type: 'checkbox', checked: u.hideUnrated !== false }), kidsHome = h('input', { type: 'checkbox', checked: !!u.kidsHome });
+  const kidsBox = h('div.stack', { style: { gap: '8px', paddingLeft: '4px' } }, h('label.row', unrated, h('span', 'Titels zonder classificatie ook verbergen')), h('label.row', kidsHome, h('span', 'Eenvoudige home voor kinderen')));
+  const syncAge = () => { kidsBox.style.display = age.value === '' ? 'none' : ''; }; age.onchange = syncAge; syncAge();
   const sync = () => { for (const [, b] of boxes) b.disabled = all.checked; list.style.opacity = all.checked ? '.5' : '1'; };
   all.onchange = sync; sync();
   const m = openModal(h('form.stack', { onsubmit: (e) => { e.preventDefault(); act(e.submitter, async () => {
-    await api(`/api/admin/users/${u.id}`, { method: 'PUT', body: { allLibraries: all.checked, allowPeers: peers.checked, libraries: boxes.filter(([, b]) => b.checked).map(([id]) => id) } });
+    await api(`/api/admin/users/${u.id}`, { method: 'PUT', body: { allLibraries: all.checked, allowPeers: peers.checked, libraries: boxes.filter(([, b]) => b.checked).map(([id]) => id), maxAge: age.value === '' ? null : Number(age.value), hideUnrated: unrated.checked, kidsHome: kidsHome.checked } });
     toast('Opgeslagen'); m.close(); after();
   }); } }, h('h2', `Toegang van ${u.name}`), h('p.muted', 'Wat niet is aangevinkt bestaat voor deze gebruiker niet: het komt niet voor in home, zoeken, collecties of samen kijken.'),
-    h('label.row', all, h('b', 'Alle bibliotheken, ook nieuwe')), list, h('label.row', peers, h('span', 'Titels van gekoppelde servers')), h('button.btn.primary', 'Opslaan')), { small: true });
+    h('label.row', all, h('b', 'Alle bibliotheken, ook nieuwe')), list, h('label.row', peers, h('span', 'Titels van gekoppelde servers')),
+    h('h3', { style: { marginTop: '6px' } }, 'Kindermodus'), h('p.muted', { style: { fontSize: '13px' } }, 'Alles boven de leeftijdsgrens wordt overal verborgen. Live tv is dan ook uit.'), age, kidsBox,
+    h('button.btn.primary', 'Opslaan')), { small: true });
 }
 
 async function auditPage() {
@@ -312,7 +339,7 @@ async function usersPage() {
     const d = await api('/api/admin/users');
     const inviteUrl = (c) => `${location.origin}/join/${c}`;
     main.replaceChildren(h('h1', 'Gebruikers'), h('p.lead', 'Iedereen heeft een eigen account met eigen voortgang, lijst en aanbevelingen.'),
-      h('div.section', h('div.list', d.users.map((u) => h('div.list-item', h(`div.avatar.${u.avatar}`, u.name[0]), h('div.grow', h('b', u.name, u.twoFactor && h('span.badge', { style: { marginLeft: '8px' } }, '2FA')), h('small', `${u.role === 'admin' ? 'Beheerder' : 'Kijker'}${u.role !== 'admin' && !u.allLibraries ? ` · ${u.libraries.length} van ${d.libraries.length} bibliotheken` : ''}`)),
+      h('div.section', h('div.list', d.users.map((u) => h('div.list-item', h(`div.avatar.${u.avatar}`, u.name[0]), h('div.grow', h('b', u.name, u.twoFactor && h('span.badge', { style: { marginLeft: '8px' } }, '2FA')), h('small', `${u.role === 'admin' ? 'Beheerder' : 'Kijker'}${u.role !== 'admin' && u.maxAge !== null && u.maxAge !== undefined ? ` · kindermodus t/m ${u.maxAge === 0 ? 'AL' : u.maxAge}` : ''}${u.role !== 'admin' && !u.allLibraries ? ` · ${u.libraries.length} van ${d.libraries.length} bibliotheken` : ''}`)),
         u.role !== 'admin' && h('button.btn.sm', { onclick: () => accessDialog(u, d.libraries, draw) }, 'Toegang'),
         u.twoFactor && u.id !== state.user.id && h('button.btn.sm', { title: 'Als iemand zijn telefoon kwijt is', onclick: async () => { if (await confirmDialog('Tweestapsverificatie resetten?', `${u.name} logt daarna weer in met alleen het wachtwoord en kan het opnieuw instellen.`, 'Resetten')) { await api(`/api/admin/users/${u.id}`, { method: 'PUT', body: { reset2fa: true } }); toast('Gereset'); draw(); } } }, '2FA resetten'),
         h('select.input', { title: 'Maximale streamkwaliteit', 'aria-label': `Maximale kwaliteit voor ${u.name}`, style: { width: 'auto', height: '34px' }, onchange: (e) => act(null, async () => { await api(`/api/admin/users/${u.id}`, { method: 'PUT', body: { maxQuality: e.target.value } }); toast('Opgeslagen'); }) },

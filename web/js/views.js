@@ -312,7 +312,7 @@ export async function openDetail(id) {
   head.querySelector('.d-head').append(actions);
   if (d.trailer) trailerWait = setTimeout(() => { if (head.isConnected) trailer = playTrailer(d.trailer, head, { onDone: () => { trailer = null; } }); }, 1200);
 
-  const meta = h('div.hero-meta', { style: { margin: '0 0 14px' } }, d.rating && h('span', h('span.star', '★ '), d.rating.toFixed(1)), d.year && h('span', d.year),
+  const meta = h('div.hero-meta', { style: { margin: '0 0 14px' } }, d.rating && h('span', h('span.star', '★ '), d.rating.toFixed(1)), d.year && h('span', d.year), d.age && h('span.age', { title: 'Kijkwijzer: minimumleeftijd' }, d.age),
     d.kind === 'movie' ? d.runtime && h('span', fmtRuntime(d.runtime)) : h('span', `${d.seasons.length} seizoen${d.seasons.length === 1 ? '' : 'en'}`));
   const side = h('div.side',
     d.cast.length ? h('div', h('b', 'Cast: '), d.cast.slice(0, 4).map((c) => c.name).join(', ')) : null,
