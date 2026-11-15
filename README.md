@@ -21,12 +21,14 @@ install/  Proxmox-helperscript, installer en de root-beheerhulp
 | **Home** | Uitgelicht, verder kijken, aanbevelingen, rijen per genre, collecties. |
 | **Versies** | Staat een film op meerdere (gekoppelde) servers, dan kiest Kinoko de hoogste bitrate; je ziet per versie van welke server hij komt en kunt zelf wisselen. |
 | **Transcoderen** | Lagere kwaliteit wordt live omgezet (HLS) met VA-API, Quick Sync, NVENC of V4L2; valt terug op software. HDR wordt daarbij omgezet naar SDR. |
-| **Samen kijken** | Uitnodigen via link of code; afspelen, pauzeren en spoelen is voor iedereen gelijk. Gasten hebben geen account nodig. |
+| **Samen kijken** | Uitnodigen via link of code; afspelen, pauzeren en spoelen is voor iedereen gelijk. Chat en emoji-reacties, ook voor gasten zonder account. |
 | **Servers koppelen** | Koppellink maken, bij de ander plakken: elkaars bibliotheken verschijnen als eigen titels. |
 | **Intro overslaan / volgende aflevering** | Intro's en aftiteling worden herkend via hoofdstukken en geluidsvergelijking binnen een seizoen. |
 | **Ondertitels** | Ingebed, los bestand, of online zoeken en downloaden. |
 | **Downloads** | In de mobiele app, hervatbaar, offline af te spelen. |
-| **Watch Night** | Thema op basis van seizoen/feestdag en drie gedobbelde films. |
+| **Watch Night** | Thema op basis van seizoen/feestdag en drie gedobbelde films. Samen stemmen: de winnaar start voor iedereen in de kamer. |
+| **Lijsten** | Lijsten met een naam, te delen met andere gebruikers om te bekijken of samen te vullen. |
+| **Jouw jaar** | Kinoko Wrapped: uren, top-titels, genres, langste sessie en favoriete kijkdag. Privé, tot je zelf een deellink maakt. |
 | **Live tv** | Xtream Codes of M3U, één keer ingesteld door de beheerder. |
 | **Extra's** | Trailers, featurettes en making-ofs (`Extras/`, `Trailers/`, `Film-trailer.mkv`…) staan op de pagina van de titel. |
 | **Nieuwe bestanden** | Mappen worden bewaakt: een nieuw of verwijderd bestand is binnen ongeveer een minuut verwerkt. De periodieke scan blijft als vangnet voor netwerkschijven. |

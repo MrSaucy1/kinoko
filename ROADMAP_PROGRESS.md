@@ -103,3 +103,21 @@ Open / niet getest:
 - Trickplay-weergave in de app (mobiel en tv) niet op een toestel.
 - De eenvoudige kinder-home heeft in web en app geen eigen vormgeving; Watch Night-knop blijft zichtbaar (resultaten zijn wel gefilterd).
 - Cinemeta levert geen classificatie; zonder TMDB-sleutel komt alles van Wikidata of `.nfo`, series hebben daar zelden een waarde.
+
+## Fase 4 — Sociaal
+
+- Status: **klaar**
+- Branch: `feat/social` (vanaf `feat/viewing`)
+- PR: https://github.com/MrSaucy1/kinoko/compare/feat/viewing...feat/social?expand=1 — tekst in `docs/pr/fase-4.md`
+
+Gedaan: chat-limiet en chatgeschiedenis in de kamer, Watch Night-stemmen, gedeelde lijsten, Wrapped (video). Migratie 4.
+
+Keuzes:
+- Chatberichten alleen in het geheugen (laatste 50 per kamer).
+- Stemmen: meerderheid van de aanwezigen of 90 s; loting bij gelijkspel.
+- Wrapped telt alleen kijktijd die bij de klok past; oude voortgang is eenmalig overgenomen.
+- Gebruikersnamen zijn voor alle ingelogde gebruikers zichtbaar (nodig om lijsten te delen).
+
+Open / niet getest:
+- App-schermen (stemmen, lijsten, Jouw jaar) niet op een toestel.
+- Web: een lijst maken of hernoemen gebruikt het standaard `prompt`-venster van de browser.
