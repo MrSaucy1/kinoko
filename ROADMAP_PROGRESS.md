@@ -213,3 +213,23 @@ Keuzes:
 Open / niet getest:
 - **De Kotlin-code van de widgets is niet gecompileerd.** Een fout daarin breekt de APK-build; draai de Actions-workflow op deze branch vóór het mergen.
 - Widget-knoppen als de app helemaal gestopt is: onbekend of de afspeeldienst dan vanzelf start.
+
+## Fase 10 — Grotere projecten
+
+Elk onderdeel een eigen branch, gestapeld. Volgorde: DVR → yt-dlp → casten → Android TV-startscherm → desktop-apps
+(eerst wat op de server te bouwen en te testen is, daarna wat een toestel of een andere bouwomgeving nodig heeft).
+
+### 10a — Live tv opnemen (DVR)
+
+- Status: **klaar**
+- Branch: `feat/dvr` (vanaf `feat/widgets`)
+- PR: https://github.com/MrSaucy1/kinoko/compare/feat/widgets...feat/dvr?expand=1 — tekst in `docs/pr/fase-10a-dvr.md`
+- Open: niet getest met een echte provider; lopende opname wordt na een herstart niet hervat; alleen in de web-GUI (de app gebruikt het beheer via de webweergave).
+
+Plan:
+- Tabellen `recordings` en `record_rules` (migratie 8).
+- Opnemen met ffmpeg (`-c copy`, vaste duur) vanaf de zender-URL; een planner start en stopt opnames; na afloop wordt de map gescand.
+- Opnames komen in een eigen bibliotheek "Opnames" (map `KINOKO_DATA/recordings`, aan te passen).
+- Serie-opname: een regel per zender + titel; de gids wordt periodiek bekeken en passende uitzendingen worden ingepland.
+- Opslaglimiet (GB) en bewaartermijn; de oudste opnames gaan eerst weg.
+- Plannen en beheren is voor beheerders (opnemen gebruikt de provider-verbinding en schijfruimte).

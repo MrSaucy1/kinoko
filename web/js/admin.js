@@ -156,6 +156,7 @@ const PAGES = {
   verzoeken: ['Verzoeken', 'plus', requestsPage],
   servers: ['Gekoppelde servers', 'server', peersPage],
   'live-tv': ['Live tv', 'globe', iptvPage],
+  opnames: ['Opnames', 'tv', dvrPage],
   'back-ups': ['Back-ups', 'download', backupsPage],
   meldingen: ['Meldingen', 'chat', webhooksPage],
   logboek: ['Logboek', 'layers', auditPage],
@@ -259,6 +260,50 @@ function ratingsSection() {
   }
   draw();
   return box;
+}
+
+// Recording live tv: pick a channel, then a programme from its guide.
+async function dvrPage() {
+  const lead = 'Neem een programma van live tv op, één keer of elke aflevering. Opnames verschijnen in de bibliotheek "Opnames".';
+  page('Opnames', lead);
+  const STATUS = { scheduled: 'Ingepland', recording: 'Neemt nu op', done: 'Klaar', failed: 'Mislukt', cancelled: 'Geannuleerd' };
+  let timer;
+  async function draw() {
+    const d = await api('/api/admin/dvr');
+    const q = h('input.input', { type: 'search', placeholder: 'Zoek een zender…', style: { maxWidth: '320px' } }), found = h('div.list'), guideBox = h('div.list');
+    let t;
+    q.oninput = () => { clearTimeout(t); t = setTimeout(async () => {
+      const r = await api(`/api/admin/dvr/channels?q=${encodeURIComponent(q.value.trim())}`);
+      guideBox.replaceChildren();
+      found.replaceChildren(...r.channels.map((c) => h('div.list-item', h('div.grow', h('b', c.name), h('small', c.category)), h('button.btn.sm', { onclick: () => showGuide(c) }, 'Gids bekijken'))));
+    }, 300); };
+    async function showGuide(c) {
+      const g = await api(`/api/admin/dvr/guide/${c.id}`);
+      found.replaceChildren();
+      const manual = () => {
+        const title = h('input.input', { placeholder: 'Titel', value: c.name }), start = h('input.input', { type: 'datetime-local' }), mins = h('input.input', { type: 'number', min: 1, max: 480, value: 60, style: { maxWidth: '110px' } });
+        const m = openModal(h('form.stack', { onsubmit: (e) => { e.preventDefault(); act(e.submitter, async () => { const s = Math.floor(new Date(start.value).getTime() / 1000); await api('/api/admin/dvr', { method: 'POST', body: { channelId: c.id, title: title.value, start: s, end: s + Number(mins.value) * 60 } }); toast('Ingepland'); m.close(); draw(); }); } },
+          h('h2', `Opnemen van ${c.name}`), h('label.field', h('span', 'Titel'), title), h('label.field', h('span', 'Begint om'), start), h('label.field', h('span', 'Duur in minuten'), mins), h('button.btn.primary', 'Inplannen')), { small: true });
+      };
+      guideBox.replaceChildren(h('div.row.wrap', { style: { margin: '6px 0' } }, h('b', `Gids van ${c.name}`), h('button.btn.sm', { onclick: manual }, 'Zelf een tijd kiezen')),
+        ...(g.programs.length ? g.programs.map((p) => h('div.list-item', h('div.grow', h('b', p.title), h('small', `${fmtDate(p.start)} – ${new Date(p.end * 1000).toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' })}`)),
+          h('button.btn.sm.primary', { onclick: (e) => act(e.currentTarget, async () => { await api('/api/admin/dvr', { method: 'POST', body: { channelId: c.id, title: p.title, start: p.start, end: p.end } }); toast('Ingepland'); draw(); }) }, 'Opnemen'),
+          h('button.btn.sm', { title: 'Elke uitzending met deze titel op deze zender', onclick: (e) => act(e.currentTarget, async () => { const r = await api('/api/admin/dvr/rules', { method: 'POST', body: { channelId: c.id, match: p.title } }); toast(`Serie-opname gemaakt (${r.scheduled} ingepland)`); draw(); }) }, 'Hele serie'))) : [h('p.muted', 'Deze zender heeft geen gids. Kies zelf een tijd.')]));
+    }
+    const limit = h('input.input', { type: 'number', min: 1, value: d.limitGb, style: { maxWidth: '110px' } }), keep = h('input.input', { type: 'number', min: 0, value: d.keepDays, style: { maxWidth: '110px' } }), dir = h('input.input', { value: d.dir });
+    main.replaceChildren(h('h1', 'Opnames'), h('p.lead', lead),
+      h('div.section', h('h2', 'Nieuwe opname'), h('div.card-box.stack', q, found, guideBox)),
+      h('div.section', h('h2', 'Opnames'), d.recordings.length ? h('div.list', d.recordings.map((r) => h('div.list-item', h('div.grow', h('b', r.title, r.series && h('span.badge', { style: { marginLeft: '8px' } }, 'serie')),
+        h('small', `${r.channel} · ${fmtDate(r.start)} · ${STATUS[r.status]}${r.size ? ` · ${fmtSize(r.size)}` : ''}${r.error ? ` · ${r.error}` : ''}`)),
+        r.status !== 'cancelled' && h('button.btn.sm.danger', { onclick: async () => { if (r.status === 'done' && !(await confirmDialog('Opname verwijderen?', `"${r.title}" wordt van de schijf gewist.`, 'Verwijderen'))) return; await api(`/api/admin/dvr/${r.id}`, { method: 'DELETE' }); draw(); } }, r.status === 'recording' ? 'Stoppen' : r.status === 'scheduled' ? 'Annuleren' : 'Verwijderen')))) : h('p.muted', 'Nog geen opnames.')),
+      d.rules.length ? h('div.section', h('h2', 'Serie-opnames'), h('div.list', d.rules.map((r) => h('div.list-item', h('div.grow', h('b', r.match), h('small', r.channel)), h('button.btn.sm.danger', { onclick: async () => { await api(`/api/admin/dvr/rules/${r.id}`, { method: 'DELETE' }); draw(); } }, 'Stoppen'))))) : null,
+      h('div.section', h('h2', 'Opslag'), h('div.card-box.stack', h('p.muted', `In gebruik: ${fmtSize(d.used)} van ${d.limitGb} GB. Is de limiet bereikt, dan gaan de oudste opnames eerst weg.`),
+        h('label.field', h('span', 'Limiet in GB'), limit), h('label.field', h('span', 'Opnames automatisch verwijderen na zoveel dagen (0 = nooit)'), keep), h('label.field', h('span', 'Map voor opnames'), dir),
+        h('div.row', h('button.btn', { onclick: (e) => act(e.currentTarget, async () => { await api('/api/admin/dvr', { method: 'PUT', body: { limitGb: Number(limit.value), keepDays: Number(keep.value), dir: dir.value } }); toast('Opgeslagen'); draw(); }) }, 'Opslaan')))));
+    clearTimeout(timer);
+    if (d.recordings.some((r) => r.status === 'recording') && main.isConnected) timer = setTimeout(() => draw().catch(() => {}), 15000);
+  }
+  draw().catch((e) => toast(e.message, 'bad'));
 }
 
 // Live: who is watching what, and how busy the server is.
