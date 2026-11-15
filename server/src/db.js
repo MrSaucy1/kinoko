@@ -513,6 +513,22 @@ export const MIGRATIONS = [
       `);
     },
   },
+  // 7 — fase 8: lyrics cache, measured loudness, scrobbling accounts.
+  (d) => {
+    d.exec(`
+      CREATE TABLE IF NOT EXISTS lyrics (
+        track_id INTEGER PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
+        synced TEXT NOT NULL DEFAULT '',      -- LRC with timestamps
+        plain TEXT NOT NULL DEFAULT '',
+        source TEXT NOT NULL DEFAULT '',      -- lrc | tags | lrclib | none
+        fetched_at INTEGER NOT NULL
+      );
+    `);
+    addColumn(d, 'tracks', 'loudness_done', 'INTEGER NOT NULL DEFAULT 0');   // measured (or tried) by the background task
+    addColumn(d, 'users', 'lb_token', 'TEXT');             // ListenBrainz user token
+    addColumn(d, 'users', 'lastfm_session', 'TEXT');       // Last.fm session key
+    addColumn(d, 'users', 'lastfm_name', 'TEXT');
+  },
 ];
 
 export function migrate(database = db, steps = MIGRATIONS) {
