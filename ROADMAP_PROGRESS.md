@@ -251,3 +251,26 @@ Plan:
 - Plan was: casten vanaf de server (Chromecast-protocol en DLNA zelf geïmplementeerd), zodat geen Cast-SDK in de apps nodig is; apparaten vinden met mDNS en SSDP; profiel per apparaat.
 - Keuze: server-side in plaats van de Cast-SDK in de mobiele app. Werkt alleen binnen het thuisnetwerk.
 - Open: echte Chromecast/DLNA; multicast in een container; ondertitels; titels van gekoppelde servers.
+
+### 10d — Android TV-startscherm
+
+- Status: **deels klaar** (rijen: code af, niet gecompileerd of getest; zoekintegratie: open)
+- Branch: `feat/tv-home` (vanaf `feat/cast`)
+- PR: https://github.com/MrSaucy1/kinoko/compare/feat/cast...feat/tv-home?expand=1 — tekst in `docs/pr/fase-10d-tv-startscherm.md`
+- Plan was: rijen "Verder kijken" en "Nieuw" via `androidx.tvprovider`, alleen in de tv-variant, gevoed door de Flutter-kant via een kanaal; diepe links naar een titel.
+- Open: **zoekintegratie** (vraagt een ContentProvider met eigen toegang tot de server; niet te testen zonder tv). Kotlin niet gecompileerd.
+
+### 10e — Desktop-apps (Linux en Windows)
+
+- Status: **open** — niet gebouwd
+- Branch: geen
+
+Waarom niet gebouwd: op deze machine mag en kan niet gebouwd worden, er is geen Linux-desktop- of Windows-toolchain, en het token mag geen CI-run starten. Elke stap hieronder kan alleen in een echte build blijken te werken; dat ongetest inleveren zou de bestaande CI rood kunnen maken zonder dat ik het kan herstellen.
+
+Plan voor wie dit oppakt (met een machine die kan bouwen):
+1. `flutter create --platforms=linux,windows .` in `app/` en `music/`.
+2. `app/`: `media_kit_libs_linux` en `media_kit_libs_windows_video` toevoegen. `webview_flutter` bestaat niet op desktop: trailers (`widgets/trailer.dart`) en het beheer (`screens/admin.dart`) achter een platformcheck zetten en op desktop het beheer in de browser openen.
+3. `music/`: `just_audio` heeft op Linux/Windows een eigen backend nodig (`just_audio_media_kit`); `audio_service` werkt op Linux via MPRIS, op Windows niet: daar de handler zonder `AudioService.init` starten. `connectivity_plus` werkt op beide.
+4. Downloads: de bestaande code gebruikt `path_provider` en gewone bestanden, dat werkt op desktop.
+5. CI: twee extra jobs (`ubuntu-latest` met `ninja-build libgtk-3-dev libmpv-dev`, en `windows-latest`), `flutter build linux --release` / `flutter build windows --release`, uitvoer als zip in de release.
+6. Vensterformaat: de tv-indeling (`Device.isTv`) niet gebruiken; de telefoonindeling schaalt al tot 640 px breed en heeft op een breed venster een eigen indeling nodig.
