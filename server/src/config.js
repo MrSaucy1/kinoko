@@ -14,11 +14,12 @@ export const config = {
   webDir: path.resolve(process.env.KINOKO_WEB || path.join(root, 'web')),
   ffmpeg: process.env.KINOKO_FFMPEG || 'ffmpeg',
   ffprobe: process.env.KINOKO_FFPROBE || 'ffprobe',
+  ytdlp: process.env.KINOKO_YTDLP || 'yt-dlp',
   helper: process.env.KINOKO_HELPER || '/usr/local/bin/kinoko-helper',
   version: JSON.parse(fs.readFileSync(path.join(here, '..', 'package.json'), 'utf8')).version,
 };
 
-for (const d of ['', 'images', 'transcode', 'subs', 'fingerprints', 'backups', 'trickplay', 'music', 'recordings']) {
+for (const d of ['', 'images', 'transcode', 'subs', 'fingerprints', 'backups', 'trickplay', 'music', 'recordings', 'archive']) {
   fs.mkdirSync(path.join(config.dataDir, d), { recursive: true });
 }
 

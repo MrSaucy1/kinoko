@@ -87,3 +87,42 @@ test('DVR with ffmpeg: a programme is recorded, lands in the Opnames library, an
   assert.equal(fs.existsSync(outside), true);
   srv.close();
 });
+
+test('archive: only a plain https address reaches yt-dlp, with fixed options before "--"', async () => {
+  const { default: archiveRoutes, cleanUrl, ytdlpArgs, writeSidecars, fetchSource, archiveDir } = await import('../src/archive.js');
+  const { parseNfo } = await import('../src/metadata.js');
+  const a = await makeApp(authRoutes, archiveRoutes);
+  for (const bad of ['--exec=rm -rf /', 'file:///etc/passwd', 'http://youtube.com/x', 'https://user:pass@youtube.com/x', 'ytsearch:iets', 'https://localhost/x', 'https://youtube.com/x\n--exec']) assert.throws(() => cleanUrl(bad), /adres/, bad);
+  assert.equal(cleanUrl(' https://www.youtube.com/@kanaal/videos '), 'https://www.youtube.com/@kanaal/videos');
+  const args = ytdlpArgs({ kind: 'video', url: 'https://www.youtube.com/@kanaal', max_items: 5 });
+  assert.deepEqual(args.slice(-2), ['--', 'https://www.youtube.com/@kanaal']);
+  assert.ok(args.includes('--ignore-config') && args.includes('--no-exec') && args[args.indexOf('--playlist-end') + 1] === '5');
+  assert.ok(ytdlpArgs({ kind: 'audio', url: 'https://x.nl/feed', max_items: 999 }).includes('-x'));
+
+  assert.equal((await call(a, ann, 'POST', '/api/admin/archive', { url: 'https://www.youtube.com/@kanaal' })).statusCode, 403);
+  assert.equal((await call(a, admin, 'POST', '/api/admin/archive', { url: '--exec=id' })).statusCode, 400);
+  const id = (await call(a, admin, 'POST', '/api/admin/archive', { url: 'https://www.youtube.com/@kanaal', name: 'Mijn kanaal', maxItems: 3 })).json().id;
+  assert.equal((await call(a, admin, 'POST', '/api/admin/archive', { url: 'https://www.youtube.com/@kanaal' })).statusCode, 409);
+
+  // A stand-in yt-dlp: notes what it was asked and leaves a video with its sidecar files.
+  const bin = path.join(tmp('yt-'), 'yt-dlp'), log = `${bin}.args`;
+  const out = path.join(archiveDir('video'), 'Kanaal', 'Eerste_video (2024)');
+  fs.writeFileSync(bin, `#!/bin/sh\nprintf '%s\\n' "$@" > '${log}'\n[ "$1" = "--version" ] && { echo 2099.01.01; exit 0; }\nmkdir -p '${out}'\necho x > '${out}/Eerste_video.mkv'\necho '{"title":"Eerste <video> & meer","description":"Uitleg","upload_date":"20240315","uploader":"Kanaal","extractor_key":"Youtube"}' > '${out}/Eerste_video.info.json'\necho j > '${out}/Eerste_video.jpg'\n`, { mode: 0o755 });
+  config.ytdlp = bin;
+  try {
+    const state = (await call(a, admin, 'GET', '/api/admin/archive')).json();
+    assert.deepEqual([state.installed, state.version, state.sources[0].name], [true, '2099.01.01', 'Mijn kanaal']);
+    const r = await fetchSource(db.prepare('SELECT * FROM archive_sources WHERE id = ?').get(id));
+    assert.deepEqual(r, { added: 1, error: '' });
+    const passed = fs.readFileSync(log, 'utf8').trim().split('\n');
+    assert.deepEqual(passed.slice(-2), ['--', 'https://www.youtube.com/@kanaal']);
+    const nfo = parseNfo(fs.readFileSync(path.join(out, 'movie.nfo'), 'utf8'));
+    assert.deepEqual([nfo.title, nfo.year, nfo.overview, nfo.localOnly], ['Eerste <video> & meer', 2024, 'Uitleg', true]);
+    assert.ok(fs.existsSync(path.join(out, 'poster.jpg')));
+    assert.equal(writeSidecars(archiveDir('video')), 0, 'sidecars are written once');
+    assert.ok(db.prepare("SELECT 1 FROM libraries WHERE name = 'Archief' AND type = 'movies'").get());
+    assert.equal(db.prepare('SELECT items FROM archive_sources WHERE id = ?').get(id).items, 1);
+  } finally { config.ytdlp = 'yt-dlp-bestaat-niet'; }
+  assert.equal((await call(a, admin, 'POST', '/api/admin/archive/run')).statusCode, 501);
+  await a.close();
+});

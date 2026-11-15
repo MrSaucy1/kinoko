@@ -14,7 +14,7 @@ import { publicUrl } from './federation.js';
 export { which };
 const helperAvailable = () => fs.existsSync(config.helper);
 
-async function helper(args, timeout = 180_000) {
+export async function helper(args, timeout = 180_000) {
   if (!helperAvailable()) throw new HttpError(501, 'De beheerhulp ontbreekt. Voer deze stap handmatig uit op de server (zie de documentatie).');
   const r = await run('sudo', ['-n', config.helper, ...args], { timeout });
   if (r.code !== 0) throw new HttpError(500, (r.stderr || r.stdout || 'De opdracht is mislukt.').trim().split('\n').slice(-3).join(' '));

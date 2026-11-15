@@ -19,6 +19,7 @@ import activityRoutes from './activity.js';
 import requestRoutes from './requests.js';
 import musicRoutes from './musicapi.js';
 import musicExtraRoutes from './musicextra.js';
+import archiveRoutes, { fetchIfDue as archiveIfDue } from './archive.js';
 import dvrRoutes, { tick as dvrTick, resume as dvrResume, applyRules as dvrRules, stopAll as dvrStop } from './dvr.js';
 import { watchLibraries, watchState } from './watcher.js';
 import metadataRoutes, { metaState } from './metadata.js';
@@ -92,7 +93,7 @@ app.put('/api/admin/settings', { preHandler: requireAdmin }, async (req) => {
   return { ok: true };
 });
 
-for (const r of [authRoutes, libraryRoutes, metadataRoutes, streamRoutes, subtitleRoutes, markerRoutes, catalogRoutes, watchRoutes, federationRoutes, iptvRoutes, remoteRoutes, eventRoutes, backupRoutes, webhookRoutes, trickplayRoutes, listRoutes, wrappedRoutes, activityRoutes, requestRoutes, musicRoutes, musicExtraRoutes, dvrRoutes]) {
+for (const r of [authRoutes, libraryRoutes, metadataRoutes, streamRoutes, subtitleRoutes, markerRoutes, catalogRoutes, watchRoutes, federationRoutes, iptvRoutes, remoteRoutes, eventRoutes, backupRoutes, webhookRoutes, trickplayRoutes, listRoutes, wrappedRoutes, activityRoutes, requestRoutes, musicRoutes, musicExtraRoutes, dvrRoutes, archiveRoutes]) {
   await app.register(r);
 }
 
@@ -141,6 +142,7 @@ setInterval(() => backupIfDue(), 3600_000).unref();
 dvrResume();
 setInterval(() => dvrTick(), 20_000).unref();
 setInterval(() => dvrRules().catch(() => {}), 30 * 60_000).unref();
+setInterval(() => archiveIfDue(), 30 * 60_000).unref();
 purgeSessions(); purgeAudit();
 setInterval(() => purgeAudit(), 6 * 3600_000).unref();
 setInterval(() => purgeSessions(), 6 * 3600_000).unref();

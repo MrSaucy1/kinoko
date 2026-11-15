@@ -44,6 +44,8 @@ export function parseNfo(xml) {
   if (cast.length) out.cast = cast;
   const directors = tags(xml, 'director'); if (directors.length) out.directors = directors;
   const rating = Number(tag(xml, 'rating') || tag(xml, 'value')); if (rating > 0 && rating <= 10) out.rating = rating;
+  // Written by Kinoko's own archiver: this is not a film to look up in a film database.
+  if (/<kinoko>\s*local\s*<\/kinoko>/i.test(xml)) out.localOnly = true;
   // <mpaa> is free text in practice: "Rated PG-13", "NL:12", "FSK 16" or several joined with " / ".
   for (const cert of [tag(xml, 'mpaa'), tag(xml, 'certification')].join(' / ').split(/\s*[/,;|]\s*/)) { const age = normalizeAge(cert); if (age !== null) { out.age = age; break; } }
   return out;
@@ -241,8 +243,8 @@ export async function enrichTitle(title) {
   const wantTitle = local.title || title.title, wantYear = local.year || title.year;
   const imdbId = local.imdb_id || title.imdb_id, tmdbId = local.tmdb_id || title.tmdb_id;
   let remote = null;
-  if (settings.get('tmdb_key', '')) remote = await tmdb(title.kind, wantTitle, wantYear, imdbId, tmdbId);
-  if (!remote || remote.error) {
+  if (!local.localOnly && settings.get('tmdb_key', '')) remote = await tmdb(title.kind, wantTitle, wantYear, imdbId, tmdbId);
+  if (!local.localOnly && (!remote || remote.error)) {
     const c = await cinemeta(title.kind, wantTitle, wantYear, imdbId);
     if (c && !c.error) remote = c; else if (!remote) remote = c;
   }

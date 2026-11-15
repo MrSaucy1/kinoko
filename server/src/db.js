@@ -557,6 +557,22 @@ export const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS recordings_status ON recordings(status, start_at);
     `);
   },
+  // 9 — fase 10: channels and playlists archived with yt-dlp.
+  (d) => {
+    d.exec(`
+      CREATE TABLE IF NOT EXISTS archive_sources (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        url TEXT NOT NULL UNIQUE,
+        kind TEXT NOT NULL DEFAULT 'video' CHECK (kind IN ('video','audio')),
+        max_items INTEGER NOT NULL DEFAULT 20,     -- newest N of the channel/playlist per run
+        last_run INTEGER,
+        last_error TEXT NOT NULL DEFAULT '',
+        items INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL
+      );
+    `);
+  },
 ];
 
 export function migrate(database = db, steps = MIGRATIONS) {

@@ -94,6 +94,28 @@ case "$cmd" in
   cloudflared-disconnect)
     cloudflared service uninstall
     ;;
+  ytdlp-install|ytdlp-update)
+    # yt-dlp for the archive feature. Takes no arguments: the address is fixed, the download is
+    # checked against the release's own checksum list, and the result is installed root-owned.
+    case "$(dpkg --print-architecture)" in
+      amd64) asset=yt-dlp_linux ;;
+      arm64) asset=yt-dlp_linux_aarch64 ;;
+      *) asset=yt-dlp; command -v python3 >/dev/null || apt-get install -y -qq python3 >/dev/null ;;
+    esac
+    base=https://github.com/yt-dlp/yt-dlp/releases/latest/download
+    tmp="$(mktemp -d)"
+    if ! curl -fsSL -o "$tmp/$asset" "$base/$asset" || ! curl -fsSL -o "$tmp/sums" "$base/SHA2-256SUMS"; then
+      rm -rf "$tmp"; die "yt-dlp downloaden is mislukt. Controleer de internetverbinding van de server."
+    fi
+    want="$(awk -v f="$asset" '$2 == f {print $1}' "$tmp/sums")"
+    have="$(sha256sum "$tmp/$asset" | cut -d' ' -f1)"
+    if [ -z "$want" ] || [ "$want" != "$have" ]; then
+      rm -rf "$tmp"; die "yt-dlp is niet geïnstalleerd: de controlesom van de download klopt niet."
+    fi
+    install -o root -g root -m 755 "$tmp/$asset" /usr/local/bin/yt-dlp
+    rm -rf "$tmp"
+    /usr/local/bin/yt-dlp --version
+    ;;
   update)
     cd "$INSTALL_DIR"
     [ -d .git ] || die "Bijwerken lukt niet: deze installatie is geen git-checkout. Voer install.sh opnieuw uit."
