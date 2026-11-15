@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_description">Verder kijken waar je was gebleven</string>
+    <string name="widget_play_pause">Afspelen of pauzeren</string>
+    <string name="widget_next">Volgende</string>
+    <string name="widget_open">Verder kijken</string>
+</resources>

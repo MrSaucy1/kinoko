@@ -197,3 +197,23 @@ Open / niet getest:
 - Downloads, offline gebruik, songteksten-scherm en Connect in de app: alleen `flutter analyze`.
 - Web: geen songteksten-scherm en geen apparatenlijst in de browser (de browser is wel een Connect-doel).
 - Echte verzoeken naar LRCLIB/ListenBrainz/Last.fm zijn niet gedaan.
+
+## Fase 9 — Widgets & Wrapped
+
+- Status: **bezig** (sessie onderbroken door de gebruikslimiet)
+- Branch: `feat/widgets` (vanaf `feat/music-polish`)
+- PR: nog niet; vergelijk-link straks https://github.com/MrSaucy1/kinoko/compare/feat/music-polish...feat/widgets?expand=1
+
+Gedaan:
+- Homescreen-widgets voor Android, zonder extra pakket: `NowPlayingWidget` (Kinoko Music: nummer, hoes, afspelen/pauzeren/volgende) en `ContinueWidget` (Kinoko: "Verder kijken"). Native code in `*/android/app/src/main/kotlin/…`, layouts in `res/layout`, aangestuurd via `packages/kinoko_core/lib/home_widget.dart`.
+
+Nog te doen:
+- **Wrapped uitbreiden met muziek**: in `server/src/musicextra.js` een sectie registreren met `addWrappedSection` (uit `wrapped.js`) die uit `music_plays` levert: `music: { empty, seconds, tracks, artists, topArtists[{name,seconds}], topTracks[{title,artist,plays}], topGenres[{name,share}] }`. Web (`wrappedCards`) en app (`WrappedScreen`) tonen dit veld al. Test toevoegen in `server/test/`.
+- README-rij voor widgets, `docs/pr/fase-9.md`.
+
+Open / niet getest:
+- De Kotlin-code van de widgets is niet gecompileerd (hier wordt niet gebouwd). Een fout daarin breekt de APK-build; controleer dit met een Actions-run op deze branch vóór het mergen.
+
+## Fase 10 — Grotere projecten
+
+- Status: **niet begonnen** (casten, DVR, yt-dlp, desktop-apps, Android TV-startscherm).

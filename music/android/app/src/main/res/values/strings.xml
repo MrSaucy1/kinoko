@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_description">Wat er speelt, met afspelen, pauzeren en volgende</string>
+    <string name="widget_play_pause">Afspelen of pauzeren</string>
+    <string name="widget_next">Volgende</string>
+    <string name="widget_open">Verder kijken</string>
+</resources>

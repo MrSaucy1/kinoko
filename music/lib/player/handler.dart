@@ -5,9 +5,11 @@ import 'package:audio_service/audio_service.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:kinoko_core/api.dart';
 import 'package:kinoko_core/events.dart';
+import 'package:kinoko_core/home_widget.dart';
 
 import '../data/downloads.dart';
 import '../data/models.dart';
+import '../widgets/cover.dart';
 
 /// The one audio handler of the app. Set in main() before the UI starts.
 late KinokoAudioHandler audio;
@@ -341,7 +343,15 @@ class KinokoAudioHandler extends BaseAudioHandler with SeekHandler {
   }
 
   // ---------------------------------------------------------------- Kinoko Connect
+  /// The home-screen widget shows what plays, with the cover from the on-disk cache.
+  Future<void> _updateWidget() async {
+    final t = current;
+    final cover = t?.cover == null ? null : await CoverCache.get(api.abs(t!.cover)!);
+    await HomeWidget.update({'title': t?.title ?? '', 'subtitle': t?.artist ?? '', 'playing': _player.playing ? '1' : '0', 'cover': cover?.path ?? ''});
+  }
+
   void _reportState() {
+    _updateWidget();
     final t = current;
     ServerEvents.instance.send({
       't': 'player',

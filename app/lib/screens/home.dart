@@ -1,6 +1,9 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:kinoko_core/home_widget.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../core/api.dart';
 import '../core/theme.dart';
@@ -22,7 +25,28 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _kind;
   late Future<Json> _future = _fetch();
 
-  Future<Json> _fetch() => api.get('/api/home${_kind != null ? '?kind=$_kind' : ''}');
+  Future<Json> _fetch() async {
+    final d = await api.get('/api/home${_kind != null ? '?kind=$_kind' : ''}');
+    if (_kind == null && !Device.isTv) unawaited(_feedWidget(d));
+    return d;
+  }
+
+  /// The home-screen widget shows what the "Verder kijken" row starts with.
+  Future<void> _feedWidget(Json d) async {
+    try {
+      final row = listOf(d['rows']).where((r) => r['id'] == 'continue').firstOrNull;
+      final c = listOf(row?['items']).firstOrNull;
+      if (c == null) return HomeWidget.update(const {'title': '', 'subtitle': '', 'cover': ''});
+      final r = c['resume'] as Json?;
+      final sub = r != null && r['episodeId'] != null ? 'S${r['season']} · A${r['episode']} — verder kijken' : 'Verder kijken';
+      final poster = api.abs(c['poster'] ?? c['backdrop']);
+      final dir = await getApplicationCacheDirectory();
+      final cover = await HomeWidget.picture(poster, File('${dir.path}/widget-${c['id']}.img'));
+      await HomeWidget.update({'title': c['title'].toString(), 'subtitle': sub, 'cover': cover});
+    } catch (_) {
+      // The widget is a convenience; home works without it.
+    }
+  }
   void _reload() => setState(() => _future = _fetch());
   void _setKind(String? k) {
     _kind = k;
