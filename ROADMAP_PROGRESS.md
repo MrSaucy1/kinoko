@@ -233,3 +233,12 @@ Plan:
 - Serie-opname: een regel per zender + titel; de gids wordt periodiek bekeken en passende uitzendingen worden ingepland.
 - Opslaglimiet (GB) en bewaartermijn; de oudste opnames gaan eerst weg.
 - Plannen en beheren is voor beheerders (opnemen gebruikt de provider-verbinding en schijfruimte).
+
+### 10b — Archiveren met yt-dlp
+
+- Status: **klaar**
+- Branch: `feat/archive` (vanaf `feat/dvr`)
+- PR: https://github.com/MrSaucy1/kinoko/compare/feat/dvr...feat/archive?expand=1 — tekst in `docs/pr/fase-10b-archief.md`
+- Plan was: helper-opdrachten zonder argumenten met controlesom; bronnen-tabel (migratie 9); yt-dlp als gewone gebruiker met vaste opties en het adres na `--`; eigen bibliotheken; nfo + poster uit de info van yt-dlp.
+- Keuze: alleen `https://`-adressen; maximaal 1080p; `<kinoko>local</kinoko>` in het nfo slaat online metadata over.
+- Open: niet getest met de echte yt-dlp; helper-opdrachten niet als root gedraaid.

@@ -157,6 +157,7 @@ const PAGES = {
   servers: ['Gekoppelde servers', 'server', peersPage],
   'live-tv': ['Live tv', 'globe', iptvPage],
   opnames: ['Opnames', 'tv', dvrPage],
+  archief: ['Archief', 'folder', archivePage],
   'back-ups': ['Back-ups', 'download', backupsPage],
   meldingen: ['Meldingen', 'chat', webhooksPage],
   logboek: ['Logboek', 'layers', auditPage],
@@ -260,6 +261,35 @@ function ratingsSection() {
   }
   draw();
   return box;
+}
+
+// Archiving channels and playlists with yt-dlp.
+async function archivePage() {
+  const lead = 'Bewaar kanalen en playlists (YouTube, podcasts) in je eigen bibliotheek. Kinoko haalt geregeld op wat nieuw is.';
+  page('Archief', lead);
+  let timer;
+  async function draw() {
+    const d = await api('/api/admin/archive');
+    const name = h('input.input', { placeholder: 'Naam (bijv. Kookkanaal)', maxLength: 80 }), url = h('input.input', { placeholder: 'https://www.youtube.com/@kanaal' }), max = h('input.input', { type: 'number', min: 1, max: 200, value: 20, style: { maxWidth: '100px' }, title: 'Nieuwste aantal per keer' });
+    const kind = h('select.input', { style: { width: 'auto' } }, h('option', { value: 'video' }, 'Video'), h('option', { value: 'audio' }, 'Alleen geluid (podcast, muziek)'));
+    const hours = h('input.input', { type: 'number', min: 1, max: 720, value: d.hours, style: { maxWidth: '110px' } });
+    main.replaceChildren(h('h1', 'Archief'), h('p.lead', lead),
+      h('div.section', h('div.card-box.stack', d.installed ? h('p', `yt-dlp ${d.version || ''} is geïnstalleerd.`) : h('div.note.warn', 'yt-dlp is nog niet geïnstalleerd op de server.'),
+        d.helper ? h('div.row', h('button.btn', { onclick: (e) => act(e.currentTarget, async () => { const r = await api('/api/admin/archive/ytdlp', { method: 'POST', body: { update: d.installed } }); toast(`yt-dlp ${r.version}`); draw(); }) }, icon('download'), d.installed ? 'yt-dlp bijwerken' : 'yt-dlp installeren'))
+          : h('p.muted', 'De beheerhulp ontbreekt op deze server; installeer yt-dlp dan zelf in /usr/local/bin.'),
+        h('p.muted', { style: { fontSize: '13px' } }, 'Sites veranderen vaak; werkt ophalen niet meer, werk yt-dlp dan bij. Bewaar alleen wat je mag bewaren.'))),
+      h('div.section', h('h2', 'Bronnen'), d.state.running && h('div.note', `Bezig: ${d.state.source} (${d.state.done}/${d.state.total})`),
+        d.sources.length ? h('div.list', d.sources.map((s) => h('div.list-item', h('div.grow', h('b', s.name), h('small', `${s.kind === 'audio' ? 'Geluid' : 'Video'} · ${s.url}`), h('small', `${s.items} opgehaald${s.lastRun ? ` · laatst ${fmtDate(s.lastRun)}` : ' · nog niet opgehaald'}`),
+          s.lastError && h('small', { style: { color: 'var(--bad)' } }, s.lastError)),
+          h('button.btn.sm.danger', { 'aria-label': 'Verwijderen', onclick: async () => { if (await confirmDialog('Bron verwijderen?', 'Wat al is opgehaald blijft in de bibliotheek staan.', 'Verwijderen')) { await api(`/api/admin/archive/${s.id}`, { method: 'DELETE' }); draw(); } } }, icon('trash'))))) : h('p.muted', 'Nog geen bronnen.'),
+        h('div.row', { style: { marginTop: '12px' } }, h('button.btn', { disabled: !d.installed || d.state.running || !d.sources.length, onclick: (e) => act(e.currentTarget, async () => { await api('/api/admin/archive/run', { method: 'POST' }); toast('Ophalen gestart'); draw(); }) }, icon('refresh'), 'Nu ophalen'))),
+      h('div.section', h('h2', 'Bron toevoegen'), h('form.card-box.stack', { onsubmit: (e) => { e.preventDefault(); act(e.submitter, async () => { await api('/api/admin/archive', { method: 'POST', body: { name: name.value, url: url.value, kind: kind.value, maxItems: Number(max.value) } }); toast('Toegevoegd'); draw(); }); } },
+        h('label.field', h('span', 'Adres van het kanaal of de playlist'), url), h('div.row.wrap', name, kind, max), h('div.row', h('button.btn.primary', 'Toevoegen')))),
+      h('div.section', h('h2', 'Hoe vaak'), h('div.card-box', h('label.field', h('span', `Elke zoveel uur ophalen. Bestanden komen in ${d.dir}.`), h('div.row', hours, h('button.btn', { onclick: (e) => act(e.currentTarget, async () => { await api('/api/admin/archive', { method: 'PUT', body: { hours: Number(hours.value) } }); toast('Opgeslagen'); }) }, 'Opslaan'))))));
+    clearTimeout(timer);
+    if (d.state.running && main.isConnected) timer = setTimeout(() => draw().catch(() => {}), 5000);
+  }
+  draw().catch((e) => toast(e.message, 'bad'));
 }
 
 // Recording live tv: pick a channel, then a programme from its guide.
