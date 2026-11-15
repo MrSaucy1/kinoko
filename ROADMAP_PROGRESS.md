@@ -242,3 +242,12 @@ Plan:
 - Plan was: helper-opdrachten zonder argumenten met controlesom; bronnen-tabel (migratie 9); yt-dlp als gewone gebruiker met vaste opties en het adres na `--`; eigen bibliotheken; nfo + poster uit de info van yt-dlp.
 - Keuze: alleen `https://`-adressen; maximaal 1080p; `<kinoko>local</kinoko>` in het nfo slaat online metadata over.
 - Open: niet getest met de echte yt-dlp; helper-opdrachten niet als root gedraaid.
+
+### 10c — Casten
+
+- Status: **klaar** (code); niet met echte apparaten getest
+- Branch: `feat/cast` (vanaf `feat/archive`)
+- PR: https://github.com/MrSaucy1/kinoko/compare/feat/archive...feat/cast?expand=1 — tekst in `docs/pr/fase-10c-casten.md`
+- Plan was: casten vanaf de server (Chromecast-protocol en DLNA zelf geïmplementeerd), zodat geen Cast-SDK in de apps nodig is; apparaten vinden met mDNS en SSDP; profiel per apparaat.
+- Keuze: server-side in plaats van de Cast-SDK in de mobiele app. Werkt alleen binnen het thuisnetwerk.
+- Open: echte Chromecast/DLNA; multicast in een container; ondertitels; titels van gekoppelde servers.

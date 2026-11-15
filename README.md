@@ -36,6 +36,7 @@ install/  Proxmox-helperscript, installer en de root-beheerhulp
 | **Kinoko Music** | Muziek-app in Spotify-stijl: home met dagmixen, zoeken, bibliotheek, album- en artiestpagina's, speler met wachtrij, shuffle/herhalen, liken, playlists maken en delen. Naadloos afspelen en overvloeien, volume gelijktrekken (ReplayGain), meescrollende songteksten, radio en doorspelen, offline downloads, aparte kwaliteit voor wifi en mobiel, scrobbelen naar ListenBrainz/Last.fm, en Kinoko Connect (afspelen overzetten naar een ander apparaat). Android Auto met spraakzoeken. |
 | **Live tv** | Xtream Codes of M3U, één keer ingesteld door de beheerder. |
 | **Archief** | Kanalen en playlists (YouTube, podcasts) bewaren met yt-dlp, periodiek bijgewerkt, in een eigen bibliotheek. yt-dlp installeer en update je vanuit het beheer. |
+| **Casten** | "Afspelen op…": films, afleveringen en muziek afspelen op een Chromecast of een DLNA-apparaat (tv, versterker) in huis, vanuit web en apps. De server stuurt het apparaat aan. |
 | **Opnemen** | Een programma uit de gids opnemen, één keer of als serie. Opnames komen in een eigen bibliotheek, met opslaglimiet en automatisch opruimen. |
 | **Extra's** | Trailers, featurettes en making-ofs (`Extras/`, `Trailers/`, `Film-trailer.mkv`…) staan op de pagina van de titel. |
 | **Nieuwe bestanden** | Mappen worden bewaakt: een nieuw of verwijderd bestand is binnen ongeveer een minuut verwerkt. De periodieke scan blijft als vangnet voor netwerkschijven. |

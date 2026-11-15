@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:kinoko_core/api.dart';
+import 'package:kinoko_core/cast.dart';
 import 'package:kinoko_core/events.dart';
 import 'package:kinoko_core/theme.dart';
 import 'package:kinoko_core/widgets.dart';
@@ -20,6 +21,7 @@ void registerExtras() {
   playerExtras
     ..add((context, t) => TextButton.icon(onPressed: () => Navigator.of(context, rootNavigator: true).push(MaterialPageRoute(builder: (_) => LyricsScreen(t))), icon: const Icon(Icons.lyrics_outlined, color: K.lilac), label: const Text('Tekst', style: TextStyle(color: K.lilac))))
     ..add((context, t) => TextButton.icon(onPressed: () => showDevices(context), icon: const Icon(Icons.speaker_group_outlined, color: K.lilac), label: const Text('Apparaten', style: TextStyle(color: K.lilac))));
+  playerExtras.add((context, t) => IconButton(tooltip: 'Afspelen op…', icon: const Icon(Icons.cast_rounded, color: K.lilac), onPressed: () => showCastSheet(context, {'trackId': t.id, 'position': audio.position.inMilliseconds / 1000}, onStarted: audio.pause)));
   collectionExtras
     ..add((context, kind, id, tracks) => kind == 'artist' ? const SizedBox.shrink() : _DownloadButton(kind, id, tracks))
     ..add((context, kind, id, tracks) => kind == 'playlist'

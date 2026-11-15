@@ -1,6 +1,6 @@
 // The web player: direct play or HLS, skip intro, next-episode countdown,
 // subtitles (incl. online search), version/quality switching, Watch Together.
-import { api, h, icon, state, go, toast, act, mountLayer, fmtTime, fmtBitrate } from './core.js';
+import { api, h, icon, state, go, toast, act, mountLayer, openModal, fmtTime, fmtBitrate } from './core.js';
 import { inviteDialog } from './views.js';
 
 function browserCaps() {
@@ -64,6 +64,7 @@ export async function startPlayback(opts) {
   const stage = h('div.stage', video,
     h('div.p-ui',
       h('div.p-top', h('button.icon-btn', { 'aria-label': 'Terug', onclick: () => close() }, icon('back')), h('div.grow', title, sub),
+        !room && h('button.btn.ghost.sm', { onclick: () => castDialog() }, icon('tv'), 'Afspelen op…'),
         !isGuest && h('button.btn.ghost.sm', { onclick: () => startRoom() }, icon('users'), room ? 'Uitnodigen' : 'Samen kijken')),
       h('div.p-bottom', seek, h('div.p-controls', playBtn,
         h('button', { 'aria-label': '10 seconden terug', onclick: () => jump(-10) }, icon('back10')), h('button', { 'aria-label': '10 seconden vooruit', onclick: () => jump(10) }, icon('fwd10')),
@@ -350,6 +351,23 @@ export async function startPlayback(opts) {
     stage.append(voteEl);
   }
   function endVote() { clearInterval(voteTick); if (voteEl) { voteEl.remove(); voteEl = null; } voting = null; }
+
+  // Casting: the server tells a Chromecast or DLNA device in the house to play this file.
+  async function castDialog() {
+    const list = h('div.stack', { style: { gap: '8px' } }, h('p.muted', 'Apparaten zoeken…'));
+    const m = openModal(h('div.stack', h('h2', 'Afspelen op…'), h('p.muted', 'Chromecasts en tv\'s of versterkers (DLNA) in hetzelfde netwerk als de server.'), list), { small: true });
+    let d; try { d = await api('/api/cast/devices'); } catch (e) { list.replaceChildren(h('p.muted', e.message)); return; }
+    list.replaceChildren(...(d.devices.length ? d.devices.map((dev) => h('button.btn', { style: { justifyContent: 'flex-start' }, onclick: (e) => act(e.currentTarget, async () => {
+      const r = await api(`/api/cast/${dev.id}/play`, { method: 'POST', body: { fileId, quality, position: video.currentTime } });
+      video.pause(); m.close();
+      const ctl = (cmd) => api(`/api/cast/${dev.id}/control`, { method: 'POST', body: { cmd } }).catch((err) => toast(err.message, 'bad'));
+      let paused = false;
+      const bar = h('div.offer', h('div.grow', h('small', `Speelt op ${r.device}`), h('b', r.title)),
+        h('button.btn.sm', { onclick: (ev) => { paused = !paused; ctl(paused ? 'pause' : 'play'); ev.currentTarget.textContent = paused ? 'Verder' : 'Pauze'; } }, 'Pauze'),
+        h('button.btn.sm.danger', { onclick: () => { ctl('stop'); bar.remove(); } }, 'Stoppen'));
+      document.body.append(bar);
+    }) }, icon(dev.kind === 'chromecast' ? 'tv' : 'vol'), dev.name, h('small.faint', { style: { marginLeft: '8px' } }, dev.kind === 'chromecast' ? 'Chromecast' : 'DLNA'))) : [h('p.muted', 'Geen apparaten gevonden. Staat het apparaat aan en zit de server in hetzelfde netwerk?')]));
+  }
 
   async function startRoom() {
     if (room) return inviteDialog(room.code);

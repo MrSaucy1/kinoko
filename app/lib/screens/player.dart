@@ -9,6 +9,8 @@ import 'package:media_kit_video/media_kit_video.dart';
 import '../core/api.dart';
 import '../core/theme.dart';
 import '../services/downloads.dart';
+import 'package:kinoko_core/cast.dart';
+
 import '../services/events.dart';
 import '../services/room.dart';
 import '../widgets/common.dart';
@@ -1061,6 +1063,8 @@ class _PlayerScreenState extends State<PlayerScreen> with TickerProviderStateMix
                 RoundIcon(Icons.forward_10_rounded, tooltip: '10 seconden vooruit', onTap: () => _seekTo(_seconds + 10)),
                 if (_nextEpisode() != null) ...[const SizedBox(width: 14), RoundIcon(Icons.skip_next_rounded, tooltip: 'Volgende aflevering', onTap: _goNext)],
                 const SizedBox(width: 28),
+                if (!Device.isTv && _room == null && !_isLive && !_isOffline && !_isExtra && _fileId != null)
+                  RoundIcon(Icons.cast_rounded, tooltip: 'Afspelen op…', onTap: () => showCastSheet(context, {'fileId': _fileId, 'quality': _quality, 'position': _seconds}, onStarted: _player.pause)),
                 RoundIcon(Icons.subtitles_rounded, tooltip: 'Ondertitels', onTap: _openSubtitles),
                 if (!_isOffline) ...[const SizedBox(width: 14), RoundIcon(Icons.tune_rounded, tooltip: 'Versie en kwaliteit', onTap: _openQuality)],
               ],
