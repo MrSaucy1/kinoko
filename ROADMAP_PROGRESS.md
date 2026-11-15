@@ -1,5 +1,68 @@
 # Roadmap — voortgang
 
+## Eindoverzicht
+
+Alle fases zijn doorlopen. Alles staat op gestapelde branches; **er is niets naar `main` gemerged**. Dit bestand in zijn volledige vorm staat op de laatste branch (`feat/tv-home`).
+
+### Pull requests, in de volgorde waarin je ze mergt
+
+Het token van de werkomgeving mocht geen PR's aanmaken; elke regel is de link waarmee je de PR opent. De tekst staat in `docs/pr/`.
+Je kunt ook in één keer alles tot een bepaalde fase nemen door die branch rechtstreeks naar `main` te mergen: elke branch bevat alle voorgaande.
+
+| # | Fase | Branch → basis | PR openen | Tekst |
+|---|---|---|---|---|
+| 1 | 0 Security-fixes | `fix/security-hardening` → `main` | https://github.com/MrSaucy1/kinoko/compare/main...fix/security-hardening?expand=1 | `docs/pr/fase-0.md` |
+| 2 | 1 Snelle verbeteringen | `feat/quick-wins` → `fix/security-hardening` | https://github.com/MrSaucy1/kinoko/compare/fix/security-hardening...feat/quick-wins?expand=1 | `fase-1.md` |
+| 3 | 2 Beveiliging & rechten | `feat/security-features` → `feat/quick-wins` | https://github.com/MrSaucy1/kinoko/compare/feat/quick-wins...feat/security-features?expand=1 | `fase-2.md` |
+| 4 | 3 Kindermodus & beeld | `feat/viewing` → `feat/security-features` | https://github.com/MrSaucy1/kinoko/compare/feat/security-features...feat/viewing?expand=1 | `fase-3.md` |
+| 5 | 4 Sociaal | `feat/social` → `feat/viewing` | https://github.com/MrSaucy1/kinoko/compare/feat/viewing...feat/social?expand=1 | `fase-4.md` |
+| 6 | 5 Beheer & automatisering | `feat/admin` → `feat/social` | https://github.com/MrSaucy1/kinoko/compare/feat/social...feat/admin?expand=1 | `fase-5.md` |
+| 7 | 6 Muziek: server | `feat/music-server` → `feat/admin` | https://github.com/MrSaucy1/kinoko/compare/feat/admin...feat/music-server?expand=1 | `fase-6.md` |
+| 8 | 7 Kinoko Music-app | `feat/music-app` → `feat/music-server` | https://github.com/MrSaucy1/kinoko/compare/feat/music-server...feat/music-app?expand=1 | `fase-7.md` |
+| 9 | 8 Spotify-gevoel | `feat/music-polish` → `feat/music-app` | https://github.com/MrSaucy1/kinoko/compare/feat/music-app...feat/music-polish?expand=1 | `fase-8.md` |
+| 10 | 9 Widgets & Wrapped | `feat/widgets` → `feat/music-polish` | https://github.com/MrSaucy1/kinoko/compare/feat/music-polish...feat/widgets?expand=1 | `fase-9.md` |
+| 11 | 10a Opnemen (DVR) | `feat/dvr` → `feat/widgets` | https://github.com/MrSaucy1/kinoko/compare/feat/widgets...feat/dvr?expand=1 | `fase-10a-dvr.md` |
+| 12 | 10b Archief (yt-dlp) | `feat/archive` → `feat/dvr` | https://github.com/MrSaucy1/kinoko/compare/feat/dvr...feat/archive?expand=1 | `fase-10b-archief.md` |
+| 13 | 10c Casten | `feat/cast` → `feat/archive` | https://github.com/MrSaucy1/kinoko/compare/feat/archive...feat/cast?expand=1 | `fase-10c-casten.md` |
+| 14 | 10d Android TV-startscherm | `feat/tv-home` → `feat/cast` | https://github.com/MrSaucy1/kinoko/compare/feat/cast...feat/tv-home?expand=1 | `fase-10d-tv-startscherm.md` |
+
+### Wat geverifieerd is en wat niet
+
+- **Server**: 67 tests, allemaal geslaagd, waaronder tests met echte ffmpeg (HDR-tonemapping, trickplay, muziek scannen en omzetten, loudness, een echte opname).
+- **Web-GUI**: de nieuwe schermen t/m fase 6 zijn in een headless browser gecontroleerd; fase 8–10 alleen op syntax.
+- **Apps**: `flutter analyze` schoon en `flutter test` geslaagd voor `app/` en `music/`. **Er is geen enkele APK gebouwd en niets is op een toestel, tv of in een auto geprobeerd.** De native code (widgets in fase 9, tv-rijen in 10d, de manifest- en Gradle-bestanden van de muziek-app in fase 7) is nooit gecompileerd.
+- **Eerste stap vóór het mergen van fase 7 of later**: GitHub → Actions → Build → "Run workflow" op die branch. Sinds fase 7 bouwt zo'n run alle APK's zonder een release te maken. Het token van de werkomgeving mocht dat niet starten.
+
+### Wat nog open staat
+
+- **Desktop-apps (10e)**: niet gebouwd; plan staat onderaan.
+- **Zoekintegratie op het Android TV-startscherm** (10d).
+- **Crossfade** is niet beluisterd; standaard uit.
+- **Casten**: geen echte Chromecast of DLNA-apparaat getest; werkt alleen binnen het thuisnetwerk; geen ondertitels; geen titels van gekoppelde servers.
+- Niet tegen de echte dienst getest: MusicBrainz, Cover Art Archive, LRCLIB, ListenBrainz, Last.fm, Radarr/Sonarr, yt-dlp, een echte IPTV-provider voor opnames.
+- `tonemap_vaapi` en de andere hardwarepaden met HDR zijn niet op een videokaart getest.
+- De helper en `install.sh` zijn niet als root op een echte installatie gedraaid.
+- Eigen icoon voor Kinoko Music; een eigen vormgeving voor de kinder-home.
+- Per fase staan de details onder het kopje "Open / niet getest".
+
+### Wat je op een bestaande installatie doet
+
+1. **Maak eerst een back-up van de database** (kopieer `/var/lib/kinoko/kinoko.db` terwijl Kinoko stilstaat; vanaf fase 1 kan het ook via Beheer → Back-ups). Fase 6 herbouwt de tabel met bibliotheken; de migraties 1–9 draaien vanzelf bij de eerste start.
+2. Druk op **Kinoko bijwerken**. De eerste keer gebruikt die run nog de oude helper en zet de nieuwe neer; daarna haalt de helper zijn eigen updates rechtstreeks uit de repository. Controleer: `ls -l /usr/local/bin/kinoko-helper` → `root root`, `-rwxr-xr-x`.
+3. Draait iemand van een **eigen fork**: één keer `install.sh` opnieuw als root, zodat `/etc/kinoko/repo` naar die fork wijst.
+4. **Reverse proxy buiten je netwerk?** Zet `KINOKO_TRUST_PROXY` (fase 2), anders ziet Kinoko het adres van de proxy als bezoeker. Voor je cloudflared-container in hetzelfde netwerk hoeft dit niet.
+5. Wie langer dan 90 dagen niet heeft gekeken, logt opnieuw in.
+6. Nieuwe instellingen in het beheer, allemaal optioneel:
+   - Overzicht: uitlogtermijn, 2FA verplicht voor beheerders.
+   - Gebruikers: maximale kwaliteit, toegang per bibliotheek, kindermodus, 2FA resetten.
+   - Bibliotheken: type Muziek; spoel-previews per bibliotheek (standaard uit).
+   - Metadata: leeftijdsclassificatie; muziek (online opzoeken, volume meten, songteksten, Last.fm).
+   - Nieuwe pagina's: Activiteit, Verzoeken (Radarr/Sonarr, webhook), Opnames, Archief (yt-dlp installeren), Back-ups, Meldingen, Logboek.
+7. fail2ban: filter en jail staan in `install/fail2ban/` (zie README).
+8. **Apps**: installeer na een geslaagde build de nieuwe `kinoko-…apk`, `kinoko-tv-…apk` en `kinoko-music-…apk`. Voor Android Auto: "Onbekende bronnen" aanzetten (zie README).
+
+---
+
 Dit bestand is het logboek van de roadmap. Wie verder werkt (ook na een
 onderbroken sessie) leest dit eerst en gaat verder bij de eerste fase die niet
 "klaar" is.
